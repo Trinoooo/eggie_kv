@@ -1,5 +1,11 @@
 name: Test deployment
 
+
+defaults:
+  run:
+    shell: bash
+    working-directory: ./doc
+
 on:
   pull_request:
     branches:
