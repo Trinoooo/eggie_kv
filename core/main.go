@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/Trinoooo/eggie_kv/core/components/cli"
+	"github.com/Trinoooo/eggie_kv/core/cli"
 	"log"
 	"os"
 )

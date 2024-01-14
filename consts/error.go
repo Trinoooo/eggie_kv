@@ -26,7 +26,11 @@ var (
 	MkdirErr                   = &KvErr{msg: "mkdir failed", code: 100010}
 	ReadFileErr                = &KvErr{msg: "read file failed", code: 100011}
 	WriteFileErr               = &KvErr{msg: "write file failed", code: 100012}
-	FileIntegrityErr           = &KvErr{msg: "file integrity has been compromised", code: 100013}
-	GetErr                     = &KvErr{msg: "error occur when get value", code: 100020}
-	SetErr                     = &KvErr{msg: "error occur when set value", code: 100021}
+	SyncFileErr                = &KvErr{msg: "sync file failed", code: 100013}
+	CloseFileErr               = &KvErr{msg: "close file failed", code: 100014}
+	FileIntegrityErr           = &KvErr{msg: "file integrity has been compromised", code: 100015}
+	ExecCmdErr                 = &KvErr{msg: "exec shell command failed.", code: 100016}
+
+	GetErr = &KvErr{msg: "error occur when get value", code: 100020}
+	SetErr = &KvErr{msg: "error occur when set value", code: 100021}
 )

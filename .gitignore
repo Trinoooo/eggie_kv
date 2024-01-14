@@ -1,14 +1,16 @@
-# Dependencies
+# 依赖
 **/node_modules
 
-# Production
+# 产物
 **/build
+**/eggie_kv_server
+**/eggie_kv_client
 
-# Generated files
+# 生成的代码
 **/.docusaurus
 .cache-loader
 
-# Misc
+# 杂项
 .idea
 .DS_Store
 .env.local

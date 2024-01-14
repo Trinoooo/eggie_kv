@@ -2,7 +2,7 @@ package utils
 
 import "sync"
 
-func WrapLock(lock *sync.Mutex, fn func()) {
+func WithLock(lock *sync.Mutex, fn func()) {
 	lock.Lock()
 	defer lock.Unlock()
 
