@@ -1,35 +1,82 @@
-# eggie_kv技术方案
-## 功能点
-1. kv存储服务化部署，提供cli与client sdk
-2. 支持数据持久化存储（内存数据库）与非持久化存储（缓存）的kv nosql
-3. 基于跳表维护数据记录
+# eggie_kv
 
 ## 模块间关系图
 ```text
 .
-├── components
-│    ├── cli // server端cli
-│    │    └── cli.go
-│    ├── kv // 核心存储模块
-│    │    ├── channel.go // 通信管道
-│    │    ├── data.go // 数据存储代理
-│    │    ├── kv.go // kv数据库
-│    │    ├── utils.go // 工具
-│    │    └── wal.go // 先行日志代理
-│    └── server // 网络通信模块
-│        ├── handler.go
-│        ├── mw.go // 中间件
-│        └── server.go
+├── LICENSE
+├── README.md
 ├── consts
 │   ├── common.go
 │   └── error.go
-├── eggie_kv_server
+├── core
+│   ├── cli
+│   │   └── cli.go
+│   ├── eggie_kv_server
+│   ├── kv
+│   │   ├── batch.go
+│   │   ├── channel.go
+│   │   ├── data.go
+│   │   ├── kv.go
+│   │   ├── wal.go
+│   │   └── wal_test.go
+│   ├── main.go
+│   └── server
+│       ├── handler.go
+│       ├── mw.go
+│       └── server.go
+├── doc
+│   ├── README.md
+│   ├── babel.config.js
+│   ├── blog
+│   │   ├── 2019-05-28-first-blog-post.md
+│   │   ├── 2019-05-29-long-blog-post.md
+│   │   ├── 2021-08-01-mdx-blog-post.mdx
+│   │   ├── 2021-08-26-welcome
+│   │   └── authors.yml
+│   ├── build
+│   │   ├── 404.html
+│   │   ├── assets
+│   │   ├── blog
+│   │   ├── docs
+│   │   ├── img
+│   │   ├── index.html
+│   │   ├── markdown-page
+│   │   └── sitemap.xml
+│   ├── docs
+│   │   ├── intro.md
+│   │   ├── tutorial-basics
+│   │   └── tutorial-extras
+│   ├── docusaurus.config.js
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── sidebars.js
+│   ├── src
+│   │   ├── components
+│   │   ├── css
+│   │   └── pages
+│   └── static
+│       └── img
 ├── go.mod
 ├── go.sum
-├── main.go
+├── interactive
+│   ├── cli
+│   │   ├── eggie_kv_client
+│   │   └── main.go
+│   └── client_sdk
+├── makefile
+├── test_data
+│   ├── f1
+│   ├── f2
+│   └── f3
 └── utils
-├── chan.go
-├── chan_test.go
-└── utils_test
+    ├── chan.go
+    ├── chan_test.go
+    ├── file.go
+    ├── file_test.go
+    ├── lock.go
+    ├── lock_test.go
+    ├── panic.go
+    └── panic_test.go
+
 ```
 

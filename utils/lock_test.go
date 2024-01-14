@@ -13,7 +13,7 @@ func TestWrapLock(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	go WrapLock(&mu, func() {
+	go WithLock(&mu, func() {
 		defer wg.Done()
 		loop(10, func() {
 			globalVar++
@@ -21,7 +21,7 @@ func TestWrapLock(t *testing.T) {
 	})
 
 	wg.Add(1)
-	go WrapLock(&mu, func() {
+	go WithLock(&mu, func() {
 		defer wg.Done()
 		loop(10, func() {
 			globalVar++
@@ -29,7 +29,7 @@ func TestWrapLock(t *testing.T) {
 	})
 
 	wg.Add(1)
-	go WrapLock(&mu, func() {
+	go WithLock(&mu, func() {
 		defer wg.Done()
 		loop(10, func() {
 			globalVar++
