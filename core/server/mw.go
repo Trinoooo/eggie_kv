@@ -9,7 +9,7 @@ import (
 type MiddlewareFunc func(handleFn HandleFunc) HandleFunc
 
 func LogMw(handleFn HandleFunc) HandleFunc {
-	return func(req *KvRequest) (*KvResponse, error) {
+	return func(req *consts.KvRequest) (*consts.KvResponse, error) {
 		log.Info("req:", render.Render(req))
 		resp, err := handleFn(req)
 		log.Infof("resp: %#v, err: %#v", render.Render(resp), err)
@@ -18,7 +18,7 @@ func LogMw(handleFn HandleFunc) HandleFunc {
 }
 
 func ParamsValidateMw(handleFn HandleFunc) HandleFunc {
-	return func(req *KvRequest) (*KvResponse, error) {
+	return func(req *consts.KvRequest) (*consts.KvResponse, error) {
 		reqKeyLength := len(req.Key)
 		if reqKeyLength <= 0 || reqKeyLength > consts.KB {
 			return newExceptionResp(consts.InvalidParamErr), consts.InvalidParamErr

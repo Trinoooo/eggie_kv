@@ -9,18 +9,6 @@ import (
 	"net/http"
 )
 
-type KvRequest struct {
-	OperationType consts.OperatorType `json:"operation_type"`
-	Key           []byte              `json:"key"`
-	Value         []byte              `json:"value"`
-}
-
-type KvResponse struct {
-	Code    int64  `json:"code"`
-	Message string `json:"message"`
-	Data    []byte `json:"data"`
-}
-
 type Server struct {
 	operatorHandler map[consts.OperatorType]HandleFunc
 	mws             []MiddlewareFunc
@@ -71,8 +59,8 @@ func (srv *Server) WithMiddleware(mw ...MiddlewareFunc) {
 	srv.mws = append(srv.mws, mw...)
 }
 
-func parseKvReq(req *http.Request) (*KvRequest, error) {
-	kvReq := &KvRequest{}
+func parseKvReq(req *http.Request) (*consts.KvRequest, error) {
+	kvReq := &consts.KvRequest{}
 
 	bodyBytes, err := io.ReadAll(req.Body)
 	if err = json.Unmarshal(bodyBytes, kvReq); err != nil {
@@ -83,7 +71,7 @@ func parseKvReq(req *http.Request) (*KvRequest, error) {
 	return kvReq, nil
 }
 
-func mustMarshalKvResp(resp *KvResponse) []byte {
+func mustMarshalKvResp(resp *consts.KvResponse) []byte {
 	respBytes, err := json.Marshal(resp)
 	if err != nil {
 		log.Error("json marshal err:", err)
@@ -92,17 +80,17 @@ func mustMarshalKvResp(resp *KvResponse) []byte {
 	return respBytes
 }
 
-func newExceptionResp(err error) *KvResponse {
+func newExceptionResp(err error) *consts.KvResponse {
 	var kvErr = consts.UnexpectErr
 	errors.As(err, &kvErr)
-	return &KvResponse{
+	return &consts.KvResponse{
 		Code:    kvErr.Code(),
 		Message: kvErr.Error(),
 	}
 }
 
-func newSuccessResp(data []byte) *KvResponse {
-	return &KvResponse{
+func newSuccessResp(data []byte) *consts.KvResponse {
+	return &consts.KvResponse{
 		Message: "success",
 		Code:    0,
 		Data:    data,

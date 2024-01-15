@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"github.com/Trinoooo/eggie_kv/consts"
 	"github.com/Trinoooo/eggie_kv/core/kv"
-	server2 "github.com/Trinoooo/eggie_kv/core/server"
+	"github.com/Trinoooo/eggie_kv/core/server"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 	"net/http"
@@ -19,7 +19,7 @@ var (
 		Aliases: []string{"h"},
 		Value:   "127.0.0.1",
 		Usage:   "server host name.",
-		EnvVars: []string{"EGGIE_KV_HOST"},
+		EnvVars: []string{consts.Host},
 	}
 	flagPort = &cli.Int64Flag{
 		Name:    "port",
@@ -32,7 +32,7 @@ var (
 			}
 			return nil
 		},
-		EnvVars: []string{"EGGIE_KV_PORT"},
+		EnvVars: []string{consts.Port},
 	}
 	flagSegmentSize = &cli.Int64Flag{
 		Name:    "max-segment-size",
@@ -65,7 +65,7 @@ var (
 		Aliases: []string{"d"},
 		Value:   false,
 		Usage:   "set this flag to make data durable.",
-		EnvVars: []string{"EGGIE_KV_DURABLE"},
+		EnvVars: []string{consts.Durable},
 	}
 )
 
@@ -115,13 +115,13 @@ func (wrapper *Wrapper) withAction() {
 		kv.InitKv(&kv.Option{
 			Durable: ctx.Bool("durable"),
 		})
-		srv := server2.NewServer()
+		srv := server.NewServer()
 		srv.WithMiddleware(
-			server2.ParamsValidateMw,
-			server2.LogMw,
+			server.ParamsValidateMw,
+			server.LogMw,
 		)
-		srv.WithHandler(consts.OperatorTypeGet, server2.HandleGet)
-		srv.WithHandler(consts.OperatorTypeSet, server2.HandleSet)
+		srv.WithHandler(consts.OperatorTypeGet, server.HandleGet)
+		srv.WithHandler(consts.OperatorTypeSet, server.HandleSet)
 		http.HandleFunc("/", srv.Server)
 		go func() {
 			addr := fmt.Sprintf("%s:%d", ctx.String("host"), ctx.Int64("port"))
