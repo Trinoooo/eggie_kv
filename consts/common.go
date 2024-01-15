@@ -41,7 +41,19 @@ const (
 	OperatorTypeSet     OperatorType = 2
 )
 
+type KvRequest struct {
+	OperationType OperatorType `json:"operation_type"`
+	Key           []byte       `json:"key"`
+	Value         []byte       `json:"value"`
+}
+
+type KvResponse struct {
+	Code    int64  `json:"code"`
+	Message string `json:"message"`
+	Data    []byte `json:"data"`
+}
+
 var (
-	BaseDir = fmt.Sprintf("%s/eggie_kv", os.Getenv("HOME"))
+	BaseDir = fmt.Sprintf("%s/eggie_kv", os.Getenv(Home))
 	TmpDir  = "/tmp/eggie_kv"
 )

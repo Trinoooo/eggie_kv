@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/binary"
 	"github.com/Trinoooo/eggie_kv/consts"
+	"github.com/Trinoooo/eggie_kv/core/kv"
 	"github.com/Trinoooo/eggie_kv/utils"
 	log "github.com/sirupsen/logrus"
 	"io"
@@ -54,6 +55,8 @@ func (b *Block) UnMarshal(rawBytes []byte) (int64, error) {
 		return 0, consts.FileIntegrityErr
 	}
 
+	binary.PutUvarint()
+
 	offsetId, lengthId := 0, 8
 	offsetCheckSum := 8
 	offsetSize, lengthSize := 24, 8
@@ -100,7 +103,7 @@ func (b *Block) Marshal() []byte {
 // 1. 顺序写日志而不是随机写数据，提升读写磁盘效率
 // 2. 保证事务原子性
 type WriteAheadLog struct {
-	Kv          *KV
+	Kv          *kv.KV
 	Blocks      []*Block
 	NextBlockId int64
 	mu          sync.Mutex

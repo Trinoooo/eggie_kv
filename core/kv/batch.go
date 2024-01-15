@@ -1,20 +1,14 @@
 package kv
 
-type OpType int64
-
-const (
-	OpTypeUnset OpType = iota
-	OpTypeGet
-	OpTypeSet
-)
+import "github.com/Trinoooo/eggie_kv/consts"
 
 type Op struct {
-	Type  OpType
+	Type  consts.OperatorType
 	Key   string
 	Value []byte
 }
 
-func NewOp(t OpType, key string, value []byte) *Op {
+func NewOp(t consts.OperatorType, key string, value []byte) *Op {
 	return &Op{
 		Type:  t,
 		Key:   key,

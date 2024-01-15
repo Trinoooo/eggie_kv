@@ -18,23 +18,11 @@ import (
 	"time"
 )
 
-var opstrToOptype = map[string]consts.OperatorType{
+var opStrToOpType = map[string]consts.OperatorType{
 	"get": consts.OperatorTypeGet,
 	"GET": consts.OperatorTypeGet,
 	"set": consts.OperatorTypeSet,
 	"SET": consts.OperatorTypeSet,
-}
-
-type KvRequest struct {
-	OperationType consts.OperatorType `json:"operation_type"`
-	Key           []byte              `json:"key"`
-	Value         []byte              `json:"value"`
-}
-
-type KvResponse struct {
-	Code    int64  `json:"code"`
-	Message string `json:"message"`
-	Data    []byte `json:"data"`
 }
 
 func main() {
@@ -114,7 +102,7 @@ func (wrapper *CliWrapper) withAction() {
 				readline.PcItem("set"),
 				readline.PcItem("SET"),
 			),
-			HistoryFile: fmt.Sprintf("/tmp/eggie_kv_client/cmd_history_%s", time.Now().Format("20060102")),
+			HistoryFile: fmt.Sprintf("/tmp/eggie_kv/cli/cmd_history_%s", time.Now().Format("20060102")),
 		})
 		if err != nil {
 			log.Fatal(err)
@@ -145,12 +133,12 @@ func handleInput(input, url string) {
 		return
 	}
 
-	req := &KvRequest{
-		OperationType: opstrToOptype[cmd],
+	kvReq := &consts.KvRequest{
+		OperationType: opStrToOpType[cmd],
 		Key:           []byte(key),
 	}
 
-	reqBytes, err := json.Marshal(req)
+	reqBytes, err := json.Marshal(kvReq)
 	if err != nil {
 		log.Println("error occur when marshal req, err: ", err)
 		return
@@ -168,7 +156,7 @@ func handleInput(input, url string) {
 		return
 	}
 
-	kvResp := &KvResponse{}
+	kvResp := &consts.KvResponse{}
 	err = json.Unmarshal(bodyBytes, kvResp)
 	if err != nil {
 		log.Println("error occur when unmarshal resp, err: ", err)
