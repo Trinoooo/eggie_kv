@@ -1,6 +1,8 @@
 package kv
 
 import (
+	"github.com/Trinoooo/eggie_kv/consts"
+	"github.com/Trinoooo/eggie_kv/core/wal"
 	"sync"
 )
 
@@ -26,7 +28,7 @@ type Option struct {
 type KV struct {
 	Opt       *Option
 	Data      *Data
-	Wal       *WriteAheadLog
+	Wal       *wal.Log
 	BatchPool sync.Pool
 	Chan      *Channel
 }
@@ -37,7 +39,7 @@ func NewKV(opt *Option) (*KV, error) {
 		return nil, err
 	}
 
-	wal, err := NewWriteAheadLog()
+	wal, err := wal.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +71,7 @@ func (kv *KV) Get(key string) ([]byte, error) {
 	batch := kv.BatchPool.Get().(*Batch)
 	batch.Reset()
 	batch.AppendOps(
-		NewOp(OpTypeGet, key, nil),
+		NewOp(consts.OperatorTypeGet, key, nil),
 	)
 
 	result := <-kv.Chan.Produce(batch)
@@ -80,7 +82,7 @@ func (kv *KV) Set(key string, value []byte) error {
 	batch := kv.BatchPool.Get().(*Batch)
 	batch.Reset()
 	batch.AppendOps(
-		NewOp(OpTypeSet, key, value),
+		NewOp(consts.OperatorTypeSet, key, value),
 	)
 
 	result := <-kv.Chan.Produce(batch)
