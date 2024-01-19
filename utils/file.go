@@ -23,7 +23,7 @@ func CheckAndCreateFile(filePath string, flag int, perm os.FileMode) (*os.File, 
 		if errors.Is(err, os.ErrPermission) {
 			return nil, consts.FileNoPermissionErr
 		}
-		return nil, consts.DirStatErr
+		return nil, consts.FileStatErr
 	}
 
 	fd, err := os.OpenFile(filePath, flag, perm)

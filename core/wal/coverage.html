@@ -1,0 +1,427 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>wal: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/Trinoooo/eggie_kv/core/wal/lru.go (100.0%)</option>
+				
+				<option value="file1">github.com/Trinoooo/eggie_kv/core/wal/segment.go (0.0%)</option>
+				
+				<option value="file2">github.com/Trinoooo/eggie_kv/core/wal/wal.go (0.0%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package wal
+
+import (
+        "container/list"
+        "github.com/Trinoooo/eggie_kv/utils"
+        "sync"
+)
+
+type Lru struct {
+        mu   sync.Mutex
+        list *list.List
+        size int
+        m    map[int]*list.Element
+}
+
+func NewLru(size int) *Lru <span class="cov8" title="1">{
+        return &amp;Lru{
+                list: list.New(),
+                size: size,
+                m:    map[int]*list.Element{},
+        }
+}</span>
+
+type item struct {
+        idx   int
+        value []byte
+}
+
+func (lru *Lru) Read(idx int) []byte <span class="cov8" title="1">{
+        var res []byte
+        utils.WithLock(&amp;lru.mu, func() </span><span class="cov8" title="1">{
+                v, exist := lru.m[idx]
+                if !exist </span><span class="cov8" title="1">{
+                        return
+                }</span>
+
+                <span class="cov8" title="1">vv := v.Value.(*item)
+                res = vv.value
+                lru.list.Remove(v)
+                lru.list.PushFront(vv)</span>
+        })
+        <span class="cov8" title="1">return res</span>
+}
+
+func (lru *Lru) Write(idx int, data []byte) <span class="cov8" title="1">{
+        utils.WithLock(&amp;lru.mu, func() </span><span class="cov8" title="1">{
+                _, exist := lru.m[idx]
+                if exist </span><span class="cov8" title="1">{
+                        return
+                }</span>
+
+                <span class="cov8" title="1">v := &amp;item{
+                        idx:   idx,
+                        value: data,
+                }
+                lru.m[idx] = lru.list.PushFront(v)
+                if lru.list.Len() &gt; lru.size </span><span class="cov8" title="1">{
+                        last := lru.list.Back()
+                        v := lru.list.Remove(last).(*item)
+                        delete(lru.m, v.idx)
+                }</span>
+        })
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package wal
+
+import "fmt"
+
+type segment struct {
+}
+
+func buildPath(blockId int64) string <span class="cov0" title="0">{
+        return fmt.Sprintf("%020d", blockId)
+}</span>
+
+func baseToBlockId(base string) (int64, error) <span class="cov0" title="0">{
+        var firstBlockIdOfSegment int64
+        _, err := fmt.Sscanf(base, "%020d", &amp;firstBlockIdOfSegment)
+        if err != nil </span><span class="cov0" title="0">{
+                return 0, err
+        }</span>
+
+        <span class="cov0" title="0">return firstBlockIdOfSegment, nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package wal
+
+import (
+        "errors"
+        "github.com/Trinoooo/eggie_kv/consts"
+        log "github.com/sirupsen/logrus"
+        "io/fs"
+        "math"
+        "os"
+        "path/filepath"
+        "sync"
+)
+
+const (
+        mask = 0x010814
+)
+
+var DefaultOptions = &amp;Options{
+        dataPerm:         0660,
+        dirPerm:          0770,
+        segmentSize:      10 * consts.MB,
+        segmentCacheSize: 50,
+}
+
+// Options wal日志选项
+type Options struct {
+        dataPerm, dirPerm os.FileMode
+        segmentSize       uint64
+        segmentCacheSize  int
+        noSync            bool
+}
+
+func NewOptions() *Options <span class="cov0" title="0">{
+        return DefaultOptions
+}</span>
+
+func (opts *Options) SetDataPerm(dataPerm os.FileMode) *Options <span class="cov0" title="0">{
+        opts.dataPerm = dataPerm
+        return opts
+}</span>
+
+func (opts *Options) SetDirPerm(dirPerm os.FileMode) *Options <span class="cov0" title="0">{
+        opts.dirPerm = dirPerm
+        return opts
+}</span>
+
+func (opts *Options) SetSegmentSize(segmentSize uint64) *Options <span class="cov0" title="0">{
+        opts.segmentSize = segmentSize
+        return opts
+}</span>
+
+func (opts *Options) SetSegmentCacheSize(segmentCacheSize int) *Options <span class="cov0" title="0">{
+        opts.segmentCacheSize = segmentCacheSize
+        return opts
+}</span>
+
+func (opts *Options) SetNoSync() *Options <span class="cov0" title="0">{
+        opts.noSync = true
+        return opts
+}</span>
+
+func (opts *Options) check() error <span class="cov0" title="0">{
+        if opts.dataPerm == 0 || opts.dataPerm &gt; 0777 </span><span class="cov0" title="0">{
+                return consts.InvalidParamErr
+        }</span>
+
+        <span class="cov0" title="0">if opts.dirPerm == 0 || opts.dirPerm &gt; 0777 </span><span class="cov0" title="0">{
+                return consts.InvalidParamErr
+        }</span>
+
+        <span class="cov0" title="0">if opts.segmentCacheSize &lt; 0 </span><span class="cov0" title="0">{
+                return consts.InvalidParamErr
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+// Log 先行日志
+type Log struct {
+        mu sync.Mutex
+        // dirPath 先行日志的目录路径
+        dirPath string
+        // dirPerm 先行日志目录权限位
+        dirPerm os.FileMode
+        // dataPerm 先行日志数据权限位
+        dataPerm os.FileMode
+
+        // segments缓存，采用LRU缓存策略
+        segmentCache *Lru
+
+        // activeSegment 当前活跃数据文件
+        // 支持立刻持久化和写满持久化，通过
+        // noSync 控制。
+        activeSegment *segment
+
+        // latestBlockId 最新日志块idx
+        latestBlockId int64
+
+        // noSync 当设置为true时，只有segment写满
+        // 才持久化到磁盘。可以提高写性能，但需要承担
+        // 数据丢失的风险。
+        noSync bool
+}
+
+func Open(dirPath string, opts *Options) (*Log, error) <span class="cov0" title="0">{
+        if opts == nil </span><span class="cov0" title="0">{
+                opts = DefaultOptions
+        }</span>
+
+        <span class="cov0" title="0">err := opts.check()
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">wal := &amp;Log{
+                dirPath:      dirPath,
+                dirPerm:      opts.dirPerm,
+                dataPerm:     opts.dataPerm,
+                segmentCache: NewLru(opts.segmentCacheSize),
+                noSync:       opts.noSync,
+        }
+
+        err = wal.init()
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return wal, nil</span>
+}
+
+// init 读文件，初始化wal
+func (wal *Log) init() error <span class="cov0" title="0">{
+        // 整理path，使其成为clean的绝对路径
+        path := filepath.Clean(wal.dirPath)
+        if !filepath.IsAbs(path) </span><span class="cov0" title="0">{
+                wd, err := os.Getwd()
+                if err != nil </span><span class="cov0" title="0">{
+                        log.Error(err)
+                        return consts.GetWdErr
+                }</span>
+                <span class="cov0" title="0">path = filepath.Join(wd, path)</span>
+        }
+
+        // 检查目录是否存在，如不存在则创建
+        <span class="cov0" title="0">stat, err := os.Stat(path)
+        if errors.Is(err, os.ErrNotExist) </span><span class="cov0" title="0">{
+                if err := os.MkdirAll(path, wal.dirPerm); err != nil </span><span class="cov0" title="0">{
+                        log.Error(err)
+                        return consts.MkdirErr
+                }</span>
+        } else<span class="cov0" title="0"> if err != nil </span><span class="cov0" title="0">{
+                log.Error(err)
+                return consts.FileStatErr
+        }</span>
+
+        <span class="cov0" title="0">if !stat.IsDir() </span><span class="cov0" title="0">{
+                return consts.InvalidParamErr
+        }</span>
+
+        // 在先行日志目录下找latest
+        <span class="cov0" title="0">err = filepath.WalkDir(path, func(path string, de fs.DirEntry, err error) error </span><span class="cov0" title="0">{
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                <span class="cov0" title="0">if de.IsDir() </span><span class="cov0" title="0">{
+                        // 跳过，认为存放wal segment文件的目录下不应该有其他目录，有则忽略
+                        return filepath.SkipDir
+                }</span>
+
+                <span class="cov0" title="0">firstBlockIdOfSegment, err := baseToBlockId(de.Name())
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+                <span class="cov0" title="0">wal.latestBlockId = int64(math.Max(float64(wal.latestBlockId), float64(firstBlockIdOfSegment)))
+                return nil</span>
+        })
+        <span class="cov0" title="0">if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        /*
+                utils.CheckAndCreateFile(filepath.Join(path, buildPath(wal.latestBlockId)), , wal.perm)
+                if err != nil {
+                        log.Fatalln(err)
+                        return consts.WalkDirErr
+                }
+
+                defer utils.HandlePanic(func() {
+                        if err = fd.Close(); err != nil {
+                                log.Fatalln(err)
+                        }
+                })
+
+                bytes, err := io.ReadAll(fd)
+                if err != nil {
+                        log.Errorln(err)
+                        return consts.ReadFileErr
+                }
+
+                // 初始化block
+                var maxBlockId int64
+                for {
+                        if len(bytes) == 0 {
+                                break
+                        }
+
+                        block := newEmptyBlock()
+                        offset, err := block.unMarshal(bytes)
+                        if err != nil {
+                                return err
+                        }
+
+                        maxBlockId = int64(math.Max(float64(maxBlockId), float64(block.id)))
+                        wal.Blocks = append(wal.Blocks, block)
+                        bytes = bytes[offset:]
+                }
+                wal.NextBlockId = maxBlockId + 1
+        */
+        <span class="cov0" title="0">return nil</span>
+}
+
+func (wal *Log) Close() error <span class="cov0" title="0">{
+        return nil
+}</span>
+
+func (wal *Log) Write([]byte) (n int, err error) <span class="cov0" title="0">{
+        return 0, nil
+}</span>
+
+func (wal *Log) Read([]byte) (n int, err error) <span class="cov0" title="0">{
+        return 0, nil
+}</span>
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>
