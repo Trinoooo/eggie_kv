@@ -32,6 +32,11 @@ var (
 	ExecCmdErr                 = &KvErr{msg: "exec shell command failed", code: 100016}
 	GetWdErr                   = &KvErr{msg: "get work dir failed", code: 100017}
 	WalkDirErr                 = &KvErr{msg: "walk dir failed", code: 100018}
+	FileClosedErr              = &KvErr{msg: "file already closed", code: 100019}
+	SeekFileErr                = &KvErr{msg: "seek file failed", code: 100020}
+	SegmentFullErr             = &KvErr{msg: "segment file full", code: 100021}
+	NotFoundErr                = &KvErr{msg: "not found", code: 100022}
+	CorruptErr                 = &KvErr{msg: "file content corrupt", code: 100023}
 
 	GetErr = &KvErr{msg: "error occur when get value", code: 100020}
 	SetErr = &KvErr{msg: "error occur when set value", code: 100021}

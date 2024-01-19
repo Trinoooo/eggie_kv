@@ -39,7 +39,7 @@ func NewKV(opt *Option) (*KV, error) {
 		return nil, err
 	}
 
-	wal, err := wal.Open()
+	wal, err := wal.Open("")
 	if err != nil {
 		return nil, err
 	}

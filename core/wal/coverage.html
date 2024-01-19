@@ -77,7 +77,6 @@
 
 import (
         "container/list"
-        "github.com/Trinoooo/eggie_kv/utils"
         "sync"
 )
 
@@ -85,79 +84,167 @@ type Lru struct {
         mu   sync.Mutex
         list *list.List
         size int
-        m    map[int]*list.Element
+        m    map[interface{}]*list.Element
 }
 
-func NewLru(size int) *Lru <span class="cov8" title="1">{
+type item struct {
+        k, v interface{}
+}
+
+func newLru(size int) *Lru <span class="cov8" title="1">{
         return &amp;Lru{
                 list: list.New(),
                 size: size,
-                m:    map[int]*list.Element{},
+                m:    map[interface{}]*list.Element{},
         }
 }</span>
 
-type item struct {
-        idx   int
-        value []byte
+func (lru *Lru) read(key interface{}) interface{} <span class="cov8" title="1">{
+        lru.mu.Lock()
+        defer lru.mu.Unlock()
+
+        elem, exist := lru.m[key]
+        if !exist </span><span class="cov8" title="1">{
+                return nil
+        }</span>
+
+        <span class="cov8" title="1">lru.list.MoveToFront(elem)
+        return elem.Value.(*item).v</span>
 }
 
-func (lru *Lru) Read(idx int) []byte <span class="cov8" title="1">{
-        var res []byte
-        utils.WithLock(&amp;lru.mu, func() </span><span class="cov8" title="1">{
-                v, exist := lru.m[idx]
-                if !exist </span><span class="cov8" title="1">{
-                        return
-                }</span>
+func (lru *Lru) write(key, data interface{}) <span class="cov8" title="1">{
+        lru.mu.Lock()
+        defer lru.mu.Unlock()
 
-                <span class="cov8" title="1">vv := v.Value.(*item)
-                res = vv.value
-                lru.list.Remove(v)
-                lru.list.PushFront(vv)</span>
-        })
-        <span class="cov8" title="1">return res</span>
-}
-
-func (lru *Lru) Write(idx int, data []byte) <span class="cov8" title="1">{
-        utils.WithLock(&amp;lru.mu, func() </span><span class="cov8" title="1">{
-                _, exist := lru.m[idx]
-                if exist </span><span class="cov8" title="1">{
-                        return
-                }</span>
-
-                <span class="cov8" title="1">v := &amp;item{
-                        idx:   idx,
-                        value: data,
+        elem, exist := lru.m[key]
+        if exist </span><span class="cov8" title="1">{
+                lru.list.MoveToFront(elem)
+                elem.Value = &amp;item{
+                        k: key,
+                        v: data,
                 }
-                lru.m[idx] = lru.list.PushFront(v)
-                if lru.list.Len() &gt; lru.size </span><span class="cov8" title="1">{
-                        last := lru.list.Back()
-                        v := lru.list.Remove(last).(*item)
-                        delete(lru.m, v.idx)
-                }</span>
+                return
+        }</span>
+
+        <span class="cov8" title="1">lru.m[key] = lru.list.PushFront(&amp;item{
+                k: key,
+                v: data,
         })
+        if lru.list.Len() &gt; lru.size </span><span class="cov8" title="1">{
+                delete(lru.m, lru.list.Remove(lru.list.Back()).(*item).k)
+        }</span>
 }
 </pre>
 		
 		<pre class="file" id="file1" style="display: none">package wal
 
-import "fmt"
+import (
+        "fmt"
+        "github.com/Trinoooo/eggie_kv/consts"
+        "github.com/Trinoooo/eggie_kv/utils"
+        log "github.com/sirupsen/logrus"
+        "os"
+)
 
-type segment struct {
+type bpos struct {
+        start int64
+        end   int64
 }
 
-func buildPath(blockId int64) string <span class="cov0" title="0">{
-        return fmt.Sprintf("%020d", blockId)
+type segment struct {
+        fd   *os.File
+        bbuf []byte
+        bpos []*bpos
+        path string
+}
+
+func newSegment(path string) *segment <span class="cov0" title="0">{
+        seg := &amp;segment{}
+        seg.bbuf = []byte{}
+        seg.path = path
+        return seg
+}</span>
+
+func (seg *segment) open(perm os.FileMode) error <span class="cov0" title="0">{
+        fd, err := utils.CheckAndCreateFile(seg.path, os.O_RDWR, perm)
+        if err != nil </span><span class="cov0" title="0">{
+                log.Fatalln(err)
+                return consts.OpenFileErr
+        }</span>
+
+        <span class="cov0" title="0">_, err = seg.fd.Seek(0, 2)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+        <span class="cov0" title="0">seg.fd = fd
+
+        return nil</span>
+}
+
+func (seg *segment) close() error <span class="cov0" title="0">{
+        err := seg.sync()
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+        <span class="cov0" title="0">return seg.fd.Close()</span>
+}
+
+// write
+// segment数据文件不知道自己的存储上限，由外层使用者控制
+func (seg *segment) write(data []byte) error <span class="cov0" title="0">{
+        seg.bpos = append(seg.bpos, &amp;bpos{
+                start: int64(len(seg.bbuf)),
+                end:   int64(len(data)),
+        })
+        seg.bbuf = append(seg.bbuf, data...)
+        return nil
+}</span>
+
+// sync 手动持久化数据到磁盘
+func (seg *segment) sync() error <span class="cov0" title="0">{
+        _, err := seg.fd.Write(seg.bbuf)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">err = seg.fd.Sync()
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">seg.bbuf = seg.bbuf[:0]
+        return nil</span>
+}
+
+func (seg *segment) size() int64 <span class="cov0" title="0">{
+        return int64(len(seg.bbuf))
+}</span>
+
+func (seg *segment) read(idx int64) ([]byte, error) <span class="cov0" title="0">{
+        return nil, nil
+}</span>
+
+func blockIdToPath(blockId int64) string <span class="cov0" title="0">{
+        return fmt.Sprintf("%06d", blockId)
 }</span>
 
 func baseToBlockId(base string) (int64, error) <span class="cov0" title="0">{
         var firstBlockIdOfSegment int64
-        _, err := fmt.Sscanf(base, "%020d", &amp;firstBlockIdOfSegment)
+        _, err := fmt.Sscanf(base, "%06d", &amp;firstBlockIdOfSegment)
         if err != nil </span><span class="cov0" title="0">{
                 return 0, err
         }</span>
 
         <span class="cov0" title="0">return firstBlockIdOfSegment, nil</span>
 }
+
+func buildBinary(data []byte) []byte <span class="cov0" title="0">{
+        return nil
+}</span>
+
+func parseBinary() {<span class="cov0" title="0">
+
+}</span>
 </pre>
 		
 		<pre class="file" id="file2" style="display: none">package wal
@@ -165,7 +252,6 @@ func baseToBlockId(base string) (int64, error) <span class="cov0" title="0">{
 import (
         "errors"
         "github.com/Trinoooo/eggie_kv/consts"
-        log "github.com/sirupsen/logrus"
         "io/fs"
         "math"
         "os"
@@ -181,15 +267,21 @@ var DefaultOptions = &amp;Options{
         dataPerm:         0660,
         dirPerm:          0770,
         segmentSize:      10 * consts.MB,
-        segmentCacheSize: 50,
+        segmentCacheSize: 3,
+        noSync:           false,
 }
 
 // Options wal日志选项
 type Options struct {
+        // dirPerm 先行日志目录文件权限位
+        // dataPerm 先行日志数据文件权限位
         dataPerm, dirPerm os.FileMode
-        segmentSize       uint64
-        segmentCacheSize  int
-        noSync            bool
+        segmentSize       uint64 // maxSegmentSize segment数据文件最大大小
+        segmentCacheSize  int    // 内存中缓存的segment内容数量
+        // noSync 当设置为true时，只有segment写满
+        // 才持久化到磁盘。可以提高写性能，但需要承担
+        // 数据丢失的风险。
+        noSync bool
 }
 
 func NewOptions() *Options <span class="cov0" title="0">{
@@ -239,29 +331,22 @@ func (opts *Options) check() error <span class="cov0" title="0">{
 
 // Log 先行日志
 type Log struct {
-        mu sync.Mutex
-        // dirPath 先行日志的目录路径
-        dirPath string
-        // dirPerm 先行日志目录权限位
-        dirPerm os.FileMode
-        // dataPerm 先行日志数据权限位
-        dataPerm os.FileMode
-
-        // segments缓存，采用LRU缓存策略
-        segmentCache *Lru
+        mu           sync.RWMutex
+        opts         *Options
+        path         string     // path 先行日志的目录路径
+        segmentCache *Lru       // segmentCache 记录缓存，采用LRU缓存策略
+        segments     []*segment // segments 所有已知的segment
 
         // activeSegment 当前活跃数据文件
         // 支持立刻持久化和写满持久化，通过
         // noSync 控制。
         activeSegment *segment
 
-        // latestBlockId 最新日志块idx
-        latestBlockId int64
+        firstBlockIdx int64 // firstBlockIdx 第一个日志块idx
+        lateBlockIdx  int64 // lateBlockIdx 最后一个日志块idx
 
-        // noSync 当设置为true时，只有segment写满
-        // 才持久化到磁盘。可以提高写性能，但需要承担
-        // 数据丢失的风险。
-        noSync bool
+        closed    bool // close 是否已经关闭
+        corrupted bool //
 }
 
 func Open(dirPath string, opts *Options) (*Log, error) <span class="cov0" title="0">{
@@ -275,11 +360,9 @@ func Open(dirPath string, opts *Options) (*Log, error) <span class="cov0" title=
         }</span>
 
         <span class="cov0" title="0">wal := &amp;Log{
-                dirPath:      dirPath,
-                dirPerm:      opts.dirPerm,
-                dataPerm:     opts.dataPerm,
-                segmentCache: NewLru(opts.segmentCacheSize),
-                noSync:       opts.noSync,
+                path:         dirPath,
+                opts:         opts,
+                segmentCache: newLru(opts.segmentCacheSize),
         }
 
         err = wal.init()
@@ -292,26 +375,13 @@ func Open(dirPath string, opts *Options) (*Log, error) <span class="cov0" title=
 
 // init 读文件，初始化wal
 func (wal *Log) init() error <span class="cov0" title="0">{
-        // 整理path，使其成为clean的绝对路径
-        path := filepath.Clean(wal.dirPath)
-        if !filepath.IsAbs(path) </span><span class="cov0" title="0">{
-                wd, err := os.Getwd()
-                if err != nil </span><span class="cov0" title="0">{
-                        log.Error(err)
-                        return consts.GetWdErr
-                }</span>
-                <span class="cov0" title="0">path = filepath.Join(wd, path)</span>
-        }
-
         // 检查目录是否存在，如不存在则创建
-        <span class="cov0" title="0">stat, err := os.Stat(path)
+        stat, err := os.Stat(wal.path)
         if errors.Is(err, os.ErrNotExist) </span><span class="cov0" title="0">{
-                if err := os.MkdirAll(path, wal.dirPerm); err != nil </span><span class="cov0" title="0">{
-                        log.Error(err)
+                if err := os.MkdirAll(wal.path, wal.opts.dirPerm); err != nil </span><span class="cov0" title="0">{
                         return consts.MkdirErr
                 }</span>
         } else<span class="cov0" title="0"> if err != nil </span><span class="cov0" title="0">{
-                log.Error(err)
                 return consts.FileStatErr
         }</span>
 
@@ -320,7 +390,7 @@ func (wal *Log) init() error <span class="cov0" title="0">{
         }</span>
 
         // 在先行日志目录下找latest
-        <span class="cov0" title="0">err = filepath.WalkDir(path, func(path string, de fs.DirEntry, err error) error </span><span class="cov0" title="0">{
+        <span class="cov0" title="0">if err = filepath.WalkDir(wal.path, func(path string, de fs.DirEntry, err error) error </span><span class="cov0" title="0">{
                 if err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
@@ -330,68 +400,107 @@ func (wal *Log) init() error <span class="cov0" title="0">{
                         return filepath.SkipDir
                 }</span>
 
-                <span class="cov0" title="0">firstBlockIdOfSegment, err := baseToBlockId(de.Name())
+                <span class="cov0" title="0">wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, de.Name())))
+                firstBlockIdOfSegment, err := baseToBlockId(de.Name())
                 if err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
-                <span class="cov0" title="0">wal.latestBlockId = int64(math.Max(float64(wal.latestBlockId), float64(firstBlockIdOfSegment)))
-                return nil</span>
-        })
-        <span class="cov0" title="0">if err != nil </span><span class="cov0" title="0">{
+
+                <span class="cov0" title="0">if wal.firstBlockIdx == 0 </span><span class="cov0" title="0">{
+                        wal.firstBlockIdx = firstBlockIdOfSegment
+                }</span> else<span class="cov0" title="0"> {
+                        wal.firstBlockIdx = int64(math.Min(float64(wal.firstBlockIdx), float64(firstBlockIdOfSegment)))
+                }</span>
+
+                <span class="cov0" title="0">if wal.lateBlockIdx == 0 </span><span class="cov0" title="0">{
+                        wal.lateBlockIdx = firstBlockIdOfSegment
+                }</span> else<span class="cov0" title="0"> {
+                        wal.lateBlockIdx = int64(math.Max(float64(wal.lateBlockIdx), float64(firstBlockIdOfSegment)))
+                }</span>
+                <span class="cov0" title="0">return nil</span>
+        }); err != nil <span class="cov0" title="0">{
                 return err
         }</span>
 
-        /*
-                utils.CheckAndCreateFile(filepath.Join(path, buildPath(wal.latestBlockId)), , wal.perm)
-                if err != nil {
-                        log.Fatalln(err)
-                        return consts.WalkDirErr
-                }
+        <span class="cov0" title="0">wal.activeSegment = newSegment(filepath.Join(wal.path, blockIdToPath(wal.lateBlockIdx)))
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
 
-                defer utils.HandlePanic(func() {
-                        if err = fd.Close(); err != nil {
-                                log.Fatalln(err)
-                        }
-                })
-
-                bytes, err := io.ReadAll(fd)
-                if err != nil {
-                        log.Errorln(err)
-                        return consts.ReadFileErr
-                }
-
-                // 初始化block
-                var maxBlockId int64
-                for {
-                        if len(bytes) == 0 {
-                                break
-                        }
-
-                        block := newEmptyBlock()
-                        offset, err := block.unMarshal(bytes)
-                        if err != nil {
-                                return err
-                        }
-
-                        maxBlockId = int64(math.Max(float64(maxBlockId), float64(block.id)))
-                        wal.Blocks = append(wal.Blocks, block)
-                        bytes = bytes[offset:]
-                }
-                wal.NextBlockId = maxBlockId + 1
-        */
         <span class="cov0" title="0">return nil</span>
 }
 
-func (wal *Log) Close() error <span class="cov0" title="0">{
+func (wal *Log) Close() (err error) <span class="cov0" title="0">{
+        wal.mu.Lock()
+        defer wal.mu.Unlock()
+
+        if wal.closed </span><span class="cov0" title="0">{
+                err = consts.FileClosedErr
+                return
+        }</span>
+
+        <span class="cov0" title="0">e := wal.activeSegment.close()
+        if e != nil </span><span class="cov0" title="0">{
+                err = e
+                return
+        }</span>
+
+        <span class="cov0" title="0">wal.closed = true
+        return</span>
+}
+
+func (wal *Log) Write(data []byte) (int64, error) <span class="cov0" title="0">{
+        wal.mu.Lock()
+        defer wal.mu.Unlock()
+
+        if wal.closed </span><span class="cov0" title="0">{
+                return 0, consts.FileClosedErr
+        }</span>
+
+        <span class="cov0" title="0">wal.lateBlockIdx = (wal.lateBlockIdx + 1) % mask
+        if uint64(wal.activeSegment.size())+uint64(len(buildBinary(data))) &gt; wal.opts.segmentSize </span><span class="cov0" title="0">{
+                err := wal.activeSegment.close()
+                if err != nil </span><span class="cov0" title="0">{
+                        return 0, err
+                }</span>
+
+                <span class="cov0" title="0">wal.activeSegment = newSegment(filepath.Join(wal.path, blockIdToPath(wal.lateBlockIdx)))</span>
+        }
+
+        <span class="cov0" title="0">idx := wal.lateBlockIdx
+        err := wal.activeSegment.write(data)
+        if err != nil </span><span class="cov0" title="0">{
+                return 0, err
+        }</span>
+
+        <span class="cov0" title="0">if !wal.opts.noSync </span><span class="cov0" title="0">{
+                err = wal.activeSegment.sync()
+        }</span>
+
+        <span class="cov0" title="0">return idx, nil</span>
+}
+
+func (wal *Log) Read(idx int64) ([]byte, error) <span class="cov0" title="0">{
+        wal.mu.RLock()
+        defer wal.mu.RUnlock()
+
+        if wal.closed </span><span class="cov0" title="0">{
+                return nil, consts.FileClosedErr
+        }</span>
+
+        <span class="cov0" title="0">return nil, nil</span>
+}
+
+func (wal *Log) Sync() error <span class="cov0" title="0">{
+        return wal.activeSegment.sync()
+}</span>
+
+func (wal *Log) Remove(idx int) error <span class="cov0" title="0">{
         return nil
 }</span>
 
-func (wal *Log) Write([]byte) (n int, err error) <span class="cov0" title="0">{
-        return 0, nil
-}</span>
-
-func (wal *Log) Read([]byte) (n int, err error) <span class="cov0" title="0">{
-        return 0, nil
+func (wal *Log) MRemove(idxList []int) error <span class="cov0" title="0">{
+        return nil
 }</span>
 </pre>
 		

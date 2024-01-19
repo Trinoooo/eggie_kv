@@ -3,11 +3,11 @@ package wal
 import (
 	"errors"
 	"github.com/Trinoooo/eggie_kv/consts"
-	log "github.com/sirupsen/logrus"
 	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 )
 
@@ -19,15 +19,21 @@ var DefaultOptions = &Options{
 	dataPerm:         0660,
 	dirPerm:          0770,
 	segmentSize:      10 * consts.MB,
-	segmentCacheSize: 50,
+	segmentCacheSize: 3,
+	noSync:           false,
 }
 
 // Options wal日志选项
 type Options struct {
+	// dirPerm 先行日志目录文件权限位
+	// dataPerm 先行日志数据文件权限位
 	dataPerm, dirPerm os.FileMode
-	segmentSize       uint64
-	segmentCacheSize  int
-	noSync            bool
+	segmentSize       uint64 // maxSegmentSize segment数据文件最大大小
+	segmentCacheSize  int    // 内存中缓存的segment内容数量
+	// noSync 当设置为true时，只有segment写满
+	// 才持久化到磁盘。可以提高写性能，但需要承担
+	// 数据丢失的风险。
+	noSync bool
 }
 
 func NewOptions() *Options {
@@ -77,29 +83,22 @@ func (opts *Options) check() error {
 
 // Log 先行日志
 type Log struct {
-	mu sync.Mutex
-	// dirPath 先行日志的目录路径
-	dirPath string
-	// dirPerm 先行日志目录权限位
-	dirPerm os.FileMode
-	// dataPerm 先行日志数据权限位
-	dataPerm os.FileMode
-
-	// segments缓存，采用LRU缓存策略
-	segmentCache *Lru
+	mu           sync.RWMutex
+	opts         *Options
+	path         string     // path 先行日志的目录路径
+	segmentCache *Lru       // segmentCache 记录缓存，采用LRU缓存策略
+	segments     []*segment // segments 所有已知的segment
 
 	// activeSegment 当前活跃数据文件
 	// 支持立刻持久化和写满持久化，通过
 	// noSync 控制。
 	activeSegment *segment
 
-	// latestBlockId 最新日志块idx
-	latestBlockId int64
+	firstBlockIdx int64 // firstBlockIdx 第一个日志块idx
+	lateBlockIdx  int64 // lateBlockIdx 最后一个日志块idx
 
-	// noSync 当设置为true时，只有segment写满
-	// 才持久化到磁盘。可以提高写性能，但需要承担
-	// 数据丢失的风险。
-	noSync bool
+	closed    bool // closed 是否已经关闭
+	corrupted bool // corrupted 是否已损坏
 }
 
 func Open(dirPath string, opts *Options) (*Log, error) {
@@ -113,11 +112,11 @@ func Open(dirPath string, opts *Options) (*Log, error) {
 	}
 
 	wal := &Log{
-		dirPath:      dirPath,
-		dirPerm:      opts.dirPerm,
-		dataPerm:     opts.dataPerm,
-		segmentCache: NewLru(opts.segmentCacheSize),
-		noSync:       opts.noSync,
+		path:          dirPath,
+		opts:          opts,
+		segmentCache:  newLru(opts.segmentCacheSize),
+		firstBlockIdx: math.MaxInt64,
+		lateBlockIdx:  math.MinInt64,
 	}
 
 	err = wal.init()
@@ -130,26 +129,13 @@ func Open(dirPath string, opts *Options) (*Log, error) {
 
 // init 读文件，初始化wal
 func (wal *Log) init() error {
-	// 整理path，使其成为clean的绝对路径
-	path := filepath.Clean(wal.dirPath)
-	if !filepath.IsAbs(path) {
-		wd, err := os.Getwd()
-		if err != nil {
-			log.Error(err)
-			return consts.GetWdErr
-		}
-		path = filepath.Join(wd, path)
-	}
-
 	// 检查目录是否存在，如不存在则创建
-	stat, err := os.Stat(path)
+	stat, err := os.Stat(wal.path)
 	if errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(path, wal.dirPerm); err != nil {
-			log.Error(err)
+		if err := os.MkdirAll(wal.path, wal.opts.dirPerm); err != nil {
 			return consts.MkdirErr
 		}
 	} else if err != nil {
-		log.Error(err)
 		return consts.FileStatErr
 	}
 
@@ -158,7 +144,7 @@ func (wal *Log) init() error {
 	}
 
 	// 在先行日志目录下找latest
-	err = filepath.WalkDir(path, func(path string, de fs.DirEntry, err error) error {
+	if err = filepath.WalkDir(wal.path, func(path string, de fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -168,66 +154,174 @@ func (wal *Log) init() error {
 			return filepath.SkipDir
 		}
 
+		wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, de.Name())))
 		firstBlockIdOfSegment, err := baseToBlockId(de.Name())
 		if err != nil {
 			return err
 		}
-		wal.latestBlockId = int64(math.Max(float64(wal.latestBlockId), float64(firstBlockIdOfSegment)))
+
+		wal.firstBlockIdx = int64(math.Min(float64(wal.firstBlockIdx), float64(firstBlockIdOfSegment)))
+		wal.lateBlockIdx = int64(math.Max(float64(wal.lateBlockIdx), float64(firstBlockIdOfSegment)))
 		return nil
+	}); err != nil {
+		return err
+	}
+
+	sort.Slice(wal.segments, func(i, j int) bool {
+		return wal.segments[i].getStartBlockId() < wal.segments[j].getStartBlockId()
 	})
+	wal.activeSegment = wal.segments[len(wal.segments)-1]
+	err = wal.activeSegment.open(wal.opts.dataPerm)
+	if err != nil {
+		if errors.Is(err, consts.CorruptErr) {
+			wal.corrupted = true
+		}
+		return err
+	}
+
+	return nil
+}
+
+func (wal *Log) Close() (err error) {
+	wal.mu.Lock()
+	defer wal.mu.Unlock()
+
+	if wal.closed {
+		err = consts.FileClosedErr
+		return
+	}
+
+	e := wal.activeSegment.close()
+	if e != nil {
+		err = e
+		return
+	}
+
+	wal.closed = true
+	return
+}
+
+func (wal *Log) Write(data []byte) (int64, error) {
+	wal.mu.Lock()
+	defer wal.mu.Unlock()
+
+	if wal.closed {
+		return 0, consts.FileClosedErr
+	} else if wal.corrupted {
+		return 0, consts.CorruptErr
+	}
+
+	// todo: 循环写日志
+	// wal.lateBlockIdx = (wal.lateBlockIdx + 1) % mask
+	wal.lateBlockIdx += 1
+	if uint64(wal.activeSegment.size())+uint64(len(buildBinary(data))) > wal.opts.segmentSize {
+		err := wal.activeSegment.close()
+		if err != nil {
+			return 0, err
+		}
+
+		wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, blockIdToBase(wal.lateBlockIdx))))
+		wal.activeSegment = wal.segments[len(wal.segments)-1]
+		err = wal.activeSegment.open(wal.opts.dataPerm)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	idx := wal.lateBlockIdx
+	err := wal.activeSegment.write(data)
+	if err != nil {
+		return 0, err
+	}
+
+	if !wal.opts.noSync {
+		err = wal.activeSegment.sync()
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	return idx, nil
+}
+
+func (wal *Log) Read(idx int64) ([]byte, error) {
+	wal.mu.RLock()
+	defer wal.mu.RUnlock()
+
+	if wal.closed {
+		return nil, consts.FileClosedErr
+	} else if wal.corrupted {
+		return nil, consts.CorruptErr
+	}
+
+	if idx < wal.firstBlockIdx || idx > wal.lateBlockIdx {
+		return nil, consts.InvalidParamErr
+	}
+
+	targetSegment := wal.findSegment(idx)
+
+	cacheSeg := wal.segmentCache.read(targetSegment.getStartBlockId()).(*segment)
+	if cacheSeg != nil {
+		return cacheSeg.read(idx)
+	}
+	err := targetSegment.open(wal.opts.dataPerm)
+	if err != nil {
+		return nil, err
+	}
+	wal.segmentCache.write(targetSegment.getStartBlockId(), targetSegment)
+	return targetSegment.read(idx)
+}
+
+func (wal *Log) Sync() error {
+	return wal.activeSegment.sync()
+}
+
+func (wal *Log) Truncate(idx int64) error {
+	wal.mu.Lock()
+	defer wal.mu.Unlock()
+
+	if wal.closed {
+		return consts.FileClosedErr
+	} else if wal.corrupted {
+		return consts.CorruptErr
+	}
+
+	if idx < wal.firstBlockIdx || idx > wal.lateBlockIdx {
+		return consts.InvalidParamErr
+	}
+
+	for i, seg := range wal.segments {
+		if seg.startBlockId <= idx {
+			wal.segments = wal.segments[i:]
+			break
+		}
+	}
+
+	if wal.segments[0] == wal.activeSegment {
+		return wal.activeSegment.truncate(idx)
+	}
+
+	err := wal.segments[0].open(wal.opts.dataPerm)
 	if err != nil {
 		return err
 	}
 
-	/*
-		utils.CheckAndCreateFile(filepath.Join(path, buildPath(wal.latestBlockId)), , wal.perm)
-		if err != nil {
-			log.Fatalln(err)
-			return consts.WalkDirErr
-		}
+	err = wal.segments[0].truncate(idx)
+	if err != nil {
+		return err
+	}
 
-		defer utils.HandlePanic(func() {
-			if err = fd.Close(); err != nil {
-				log.Fatalln(err)
-			}
-		})
-
-		bytes, err := io.ReadAll(fd)
-		if err != nil {
-			log.Errorln(err)
-			return consts.ReadFileErr
-		}
-
-		// 初始化block
-		var maxBlockId int64
-		for {
-			if len(bytes) == 0 {
-				break
-			}
-
-			block := newEmptyBlock()
-			offset, err := block.unMarshal(bytes)
-			if err != nil {
-				return err
-			}
-
-			maxBlockId = int64(math.Max(float64(maxBlockId), float64(block.id)))
-			wal.Blocks = append(wal.Blocks, block)
-			bytes = bytes[offset:]
-		}
-		wal.NextBlockId = maxBlockId + 1
-	*/
+	err = wal.segments[0].close()
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
-func (wal *Log) Close() error {
-	return nil
-}
+func (wal *Log) findSegment(idx int64) *segment {
+	target := sort.Search(len(wal.segments), func(i int) bool {
+		return wal.segments[i].getStartBlockId() >= idx
+	})
 
-func (wal *Log) Write([]byte) (n int, err error) {
-	return 0, nil
-}
-
-func (wal *Log) Read([]byte) (n int, err error) {
-	return 0, nil
+	return wal.segments[target]
 }
