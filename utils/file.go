@@ -42,7 +42,7 @@ func AtomicFileWrite(path string, data []byte) error {
 		return consts.ExecCmdErr
 	}
 
-	tmpFd, err := CheckAndCreateFile(tmp, syscall.O_APPEND|syscall.O_CREAT|syscall.O_RDWR, 0660)
+	tmpFd, err := CheckAndCreateFile(tmp, syscall.O_CREAT|syscall.O_RDWR, 0660)
 	if err != nil {
 		return err
 	}

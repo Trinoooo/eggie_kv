@@ -95,7 +95,7 @@ type Log struct {
 	activeSegment *segment
 
 	firstBlockIdx int64 // firstBlockIdx 第一个日志块idx
-	lateBlockIdx  int64 // lateBlockIdx 最后一个日志块idx
+	lastBlockIdx  int64 // lastBlockIdx 最后一个日志块idx
 
 	closed    bool // closed 是否已经关闭
 	corrupted bool // corrupted 是否已损坏
@@ -116,7 +116,7 @@ func Open(dirPath string, opts *Options) (*Log, error) {
 		opts:          opts,
 		segmentCache:  newLru(opts.segmentCacheSize),
 		firstBlockIdx: math.MaxInt64,
-		lateBlockIdx:  math.MinInt64,
+		lastBlockIdx:  0,
 	}
 
 	err = wal.init()
@@ -135,6 +135,11 @@ func (wal *Log) init() error {
 		if err := os.MkdirAll(wal.path, wal.opts.dirPerm); err != nil {
 			return consts.MkdirErr
 		}
+
+		stat, err = os.Stat(wal.path)
+		if err != nil {
+			return consts.FileStatErr
+		}
 	} else if err != nil {
 		return consts.FileStatErr
 	}
@@ -143,9 +148,13 @@ func (wal *Log) init() error {
 		return consts.InvalidParamErr
 	}
 
-	// 在先行日志目录下找latest
+	// 遍历日志目录，获取全量数据文件信息
 	if err = filepath.WalkDir(wal.path, func(path string, de fs.DirEntry, err error) error {
 		if err != nil {
+			return err
+		}
+
+		if path == wal.path {
 			return err
 		}
 
@@ -161,16 +170,23 @@ func (wal *Log) init() error {
 		}
 
 		wal.firstBlockIdx = int64(math.Min(float64(wal.firstBlockIdx), float64(firstBlockIdOfSegment)))
-		wal.lateBlockIdx = int64(math.Max(float64(wal.lateBlockIdx), float64(firstBlockIdOfSegment)))
 		return nil
 	}); err != nil {
 		return err
 	}
 
-	sort.Slice(wal.segments, func(i, j int) bool {
-		return wal.segments[i].getStartBlockId() < wal.segments[j].getStartBlockId()
-	})
-	wal.activeSegment = wal.segments[len(wal.segments)-1]
+	// 目录下没有数据文件
+	if len(wal.segments) == 0 {
+		first := newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx)))
+		wal.segments = append(wal.segments, first)
+		wal.activeSegment = first
+	} else {
+		sort.Slice(wal.segments, func(i, j int) bool {
+			return wal.segments[i].getStartBlockId() < wal.segments[j].getStartBlockId()
+		})
+		wal.activeSegment = wal.segments[len(wal.segments)-1]
+	}
+
 	err = wal.activeSegment.open(wal.opts.dataPerm)
 	if err != nil {
 		if errors.Is(err, consts.CorruptErr) {
@@ -178,6 +194,7 @@ func (wal *Log) init() error {
 		}
 		return err
 	}
+	wal.lastBlockIdx = wal.activeSegment.getStartBlockId() + int64(len(wal.activeSegment.bpos))
 
 	return nil
 }
@@ -212,15 +229,15 @@ func (wal *Log) Write(data []byte) (int64, error) {
 	}
 
 	// todo: 循环写日志
-	// wal.lateBlockIdx = (wal.lateBlockIdx + 1) % mask
-	wal.lateBlockIdx += 1
+	// wal.lastBlockIdx = (wal.lastBlockIdx + 1) % mask
+	wal.lastBlockIdx += 1
 	if uint64(wal.activeSegment.size())+uint64(len(buildBinary(data))) > wal.opts.segmentSize {
 		err := wal.activeSegment.close()
 		if err != nil {
 			return 0, err
 		}
 
-		wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, blockIdToBase(wal.lateBlockIdx))))
+		wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx))))
 		wal.activeSegment = wal.segments[len(wal.segments)-1]
 		err = wal.activeSegment.open(wal.opts.dataPerm)
 		if err != nil {
@@ -228,7 +245,6 @@ func (wal *Log) Write(data []byte) (int64, error) {
 		}
 	}
 
-	idx := wal.lateBlockIdx
 	err := wal.activeSegment.write(data)
 	if err != nil {
 		return 0, err
@@ -241,7 +257,7 @@ func (wal *Log) Write(data []byte) (int64, error) {
 		}
 	}
 
-	return idx, nil
+	return wal.lastBlockIdx, nil
 }
 
 func (wal *Log) Read(idx int64) ([]byte, error) {
@@ -254,15 +270,15 @@ func (wal *Log) Read(idx int64) ([]byte, error) {
 		return nil, consts.CorruptErr
 	}
 
-	if idx < wal.firstBlockIdx || idx > wal.lateBlockIdx {
+	if idx < wal.firstBlockIdx || idx > wal.lastBlockIdx {
 		return nil, consts.InvalidParamErr
 	}
 
 	targetSegment := wal.findSegment(idx)
 
-	cacheSeg := wal.segmentCache.read(targetSegment.getStartBlockId()).(*segment)
+	cacheSeg := wal.segmentCache.read(targetSegment.getStartBlockId())
 	if cacheSeg != nil {
-		return cacheSeg.read(idx)
+		return cacheSeg.(*segment).read(idx)
 	}
 	err := targetSegment.open(wal.opts.dataPerm)
 	if err != nil {
@@ -286,36 +302,53 @@ func (wal *Log) Truncate(idx int64) error {
 		return consts.CorruptErr
 	}
 
-	if idx < wal.firstBlockIdx || idx > wal.lateBlockIdx {
+	if idx < wal.firstBlockIdx || idx > wal.lastBlockIdx {
 		return consts.InvalidParamErr
 	}
 
+	targetSegment := wal.findSegment(idx)
 	for i, seg := range wal.segments {
-		if seg.startBlockId <= idx {
+		if seg == targetSegment {
 			wal.segments = wal.segments[i:]
 			break
 		}
+
+		// idx之前的文件删除
+		err := os.Remove(seg.path)
+		if err != nil {
+			return err
+		}
 	}
 
-	if wal.segments[0] == wal.activeSegment {
-		return wal.activeSegment.truncate(idx)
-	}
+	if targetSegment == wal.activeSegment {
+		err := wal.activeSegment.truncate(idx)
+		if err != nil {
+			return err
+		}
 
-	err := wal.segments[0].open(wal.opts.dataPerm)
-	if err != nil {
-		return err
-	}
+		err = wal.activeSegment.sync()
+		if err != nil {
+			return err
+		}
 
-	err = wal.segments[0].truncate(idx)
-	if err != nil {
-		return err
-	}
+		return nil
+	} else {
+		err := targetSegment.open(wal.opts.dataPerm)
+		if err != nil {
+			return err
+		}
 
-	err = wal.segments[0].close()
-	if err != nil {
-		return err
+		err = targetSegment.truncate(idx)
+		if err != nil {
+			return err
+		}
+
+		err = targetSegment.close()
+		if err != nil {
+			return err
+		}
+		return nil
 	}
-	return nil
 }
 
 func (wal *Log) findSegment(idx int64) *segment {
@@ -323,5 +356,5 @@ func (wal *Log) findSegment(idx int64) *segment {
 		return wal.segments[i].getStartBlockId() >= idx
 	})
 
-	return wal.segments[target]
+	return wal.segments[target-1]
 }

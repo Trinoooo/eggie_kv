@@ -33,11 +33,12 @@ func newSegment(path string) *segment {
 }
 
 func (seg *segment) getStartBlockId() int64 {
-	return seg.startBlockId
+	blockId, _ := baseToBlockId(filepath.Base(seg.path))
+	return blockId
 }
 
 func (seg *segment) open(perm os.FileMode) error {
-	fd, err := utils.CheckAndCreateFile(seg.path, os.O_RDWR, perm)
+	fd, err := utils.CheckAndCreateFile(seg.path, os.O_RDWR|os.O_CREATE, perm)
 	if err != nil {
 		log.Fatalln(err)
 		return consts.OpenFileErr
@@ -45,6 +46,11 @@ func (seg *segment) open(perm os.FileMode) error {
 
 	seg.fd = fd
 	all, err := io.ReadAll(seg.fd)
+	if err != nil {
+		return err
+	}
+
+	_, err = seg.fd.Seek(0, 0)
 	if err != nil {
 		return err
 	}
@@ -74,8 +80,8 @@ func (seg *segment) close() error {
 		return err
 	}
 
-	seg.bbuf = seg.bbuf[:0]
-	seg.bpos = seg.bpos[:0]
+	seg.bbuf = nil
+	seg.bpos = nil
 	return nil
 }
 
@@ -83,9 +89,10 @@ func (seg *segment) close() error {
 // segment数据文件不知道自己的存储上限，由外层使用者控制
 func (seg *segment) write(data []byte) error {
 	b := buildBinary(data)
+	lbbf := int64(len(seg.bbuf))
 	seg.bpos = append(seg.bpos, &bpos{
-		start: int64(len(seg.bbuf)),
-		end:   int64(len(b)),
+		start: lbbf,
+		end:   lbbf + int64(len(b)),
 	})
 
 	seg.bbuf = append(seg.bbuf, b...)
@@ -93,10 +100,11 @@ func (seg *segment) write(data []byte) error {
 }
 
 // sync 持久化数据到磁盘
+// todo: 文件完整性
 func (seg *segment) sync() error {
 	writer := bufio.NewWriter(seg.fd)
 	for _, pos := range seg.bpos {
-		_, err := writer.Write(buildBinary(seg.bbuf[pos.start:pos.end]))
+		_, err := writer.Write(seg.bbuf[pos.start:pos.end])
 		if err != nil {
 			return err
 		}
@@ -107,6 +115,11 @@ func (seg *segment) sync() error {
 	}
 
 	err = seg.fd.Sync()
+	if err != nil {
+		return err
+	}
+
+	_, err = seg.fd.Seek(0, 0)
 	if err != nil {
 		return err
 	}
@@ -131,6 +144,10 @@ func (seg *segment) read(idx int64) ([]byte, error) {
 func (seg *segment) truncate(idx int64) error {
 	seg.bpos = seg.bpos[idx-seg.startBlockId:]
 	seg.bbuf = seg.bbuf[seg.bpos[0].start:]
+	err := seg.fd.Truncate(0)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -148,12 +165,12 @@ func baseToBlockId(base string) (int64, error) {
 }
 
 // 存储在文件中的block结构：
-// | length 8字节 | checksum 16字节 |
-// | 		   payload x字节 	   |
+// |	length 8字节	|	checksum 16字节	|
+// |			payload x字节			|
 // buildBinary 日志数据 -> 格式化二进制数据
 func buildBinary(data []byte) []byte {
 	length := int64(len(data))
-	buf := make([]byte, 8+16)
+	buf := make([]byte, 24)
 	binary.PutVarint(buf[:8], length)
 	checksum := md5.Sum(append(data, buf[:8]...))
 	for i := 0; i < len(checksum); i++ {
@@ -169,7 +186,7 @@ func loadBinary(raw []byte) ([]*bpos, []byte, error) {
 	bps := []*bpos{}
 	bbf := []byte{}
 	for {
-		if len(raw) == 0 {
+		if int64(len(raw)) == start {
 			break
 		}
 
@@ -182,7 +199,6 @@ func loadBinary(raw []byte) ([]*bpos, []byte, error) {
 			start: start,
 			end:   start + offset,
 		})
-
 		start += offset
 		bbf = append(bbf, block...)
 	}
@@ -199,12 +215,13 @@ func parseBinary(raw []byte) ([]byte, int64, error) {
 
 	length, _ := binary.Varint(raw[:8])
 	checksum := raw[8:24]
-	data := raw[24 : 24+length]
+	end := 24 + length
+	data := raw[24:end]
 	cc := md5.Sum(append(data, raw[:8]...))
 	for i := 0; i < len(checksum); i++ {
-		if checksum[8+i] != cc[i] {
+		if checksum[i] != cc[i] {
 			return nil, 0, consts.CorruptErr
 		}
 	}
-	return raw[:24+length], 24 + length, nil
+	return raw[:end], end, nil
 }
