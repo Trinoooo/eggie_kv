@@ -2,7 +2,6 @@ package wal
 
 import (
 	"container/list"
-	"github.com/Trinoooo/eggie_kv/utils"
 	"sync"
 )
 
@@ -10,54 +9,53 @@ type Lru struct {
 	mu   sync.Mutex
 	list *list.List
 	size int
-	m    map[int]*list.Element
-}
-
-func NewLru(size int) *Lru {
-	return &Lru{
-		list: list.New(),
-		size: size,
-		m:    map[int]*list.Element{},
-	}
+	m    map[interface{}]*list.Element
 }
 
 type item struct {
-	idx   int
-	value []byte
+	k, v interface{}
 }
 
-func (lru *Lru) Read(idx int) []byte {
-	var res []byte
-	utils.WithLock(&lru.mu, func() {
-		v, exist := lru.m[idx]
-		if !exist {
-			return
-		}
-
-		vv := v.Value.(*item)
-		res = vv.value
-		lru.list.Remove(v)
-		lru.list.PushFront(vv)
-	})
-	return res
+func newLru(size int) *Lru {
+	return &Lru{
+		list: list.New(),
+		size: size,
+		m:    map[interface{}]*list.Element{},
+	}
 }
 
-func (lru *Lru) Write(idx int, data []byte) {
-	utils.WithLock(&lru.mu, func() {
-		_, exist := lru.m[idx]
-		if exist {
-			return
-		}
+func (lru *Lru) read(key interface{}) interface{} {
+	lru.mu.Lock()
+	defer lru.mu.Unlock()
 
-		v := &item{
-			idx:   idx,
-			value: data,
+	elem, exist := lru.m[key]
+	if !exist {
+		return nil
+	}
+
+	lru.list.MoveToFront(elem)
+	return elem.Value.(*item).v
+}
+
+func (lru *Lru) write(key, data interface{}) {
+	lru.mu.Lock()
+	defer lru.mu.Unlock()
+
+	elem, exist := lru.m[key]
+	if exist {
+		lru.list.MoveToFront(elem)
+		elem.Value = &item{
+			k: key,
+			v: data,
 		}
-		lru.m[idx] = lru.list.PushFront(v)
-		if lru.list.Len() > lru.size {
-			last := lru.list.Back()
-			v := lru.list.Remove(last).(*item)
-			delete(lru.m, v.idx)
-		}
+		return
+	}
+
+	lru.m[key] = lru.list.PushFront(&item{
+		k: key,
+		v: data,
 	})
+	if lru.list.Len() > lru.size {
+		delete(lru.m, lru.list.Remove(lru.list.Back()).(*item).k)
+	}
 }
