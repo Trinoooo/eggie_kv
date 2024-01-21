@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main # default branch
+      - doc/restart # test
 
 jobs:
   build:
