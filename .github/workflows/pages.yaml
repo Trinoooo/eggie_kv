@@ -4,16 +4,19 @@ on:
   push:
     branches:
       - main # default branch
+      - doc/restart # test
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: ./doc/
     steps:
       - uses: actions/checkout@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # If your repository depends on submodule, please see: https://github.com/actions/checkout
-          submodules: recursive
       - name: Use Node.js 21.5.0
         uses: actions/setup-node@v2
         with:
@@ -32,7 +35,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v2
         with:
-          path: ./public
+          path: ./doc/public
   deploy:
     needs: build
     permissions:
