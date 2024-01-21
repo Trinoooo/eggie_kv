@@ -1,44 +1,26 @@
 {
-  "name": "doc",
+  "name": "hexo-site",
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "docusaurus": "docusaurus",
-    "start": "docusaurus start",
-    "build": "docusaurus build",
-    "swizzle": "docusaurus swizzle",
-    "deploy": "docusaurus deploy",
-    "clear": "docusaurus clear",
-    "serve": "docusaurus serve",
-    "write-translations": "docusaurus write-translations",
-    "write-heading-ids": "docusaurus write-heading-ids"
+    "build": "hexo generate",
+    "clean": "hexo clean",
+    "deploy": "hexo deploy",
+    "server": "hexo server"
+  },
+  "hexo": {
+    "version": "7.1.0"
   },
   "dependencies": {
-    "@docusaurus/core": "3.1.0",
-    "@docusaurus/preset-classic": "3.1.0",
-    "@mdx-js/react": "^3.0.0",
-    "clsx": "^2.0.0",
-    "prism-react-renderer": "^2.3.0",
-    "react": "^18.0.0",
-    "react-dom": "^18.0.0"
-  },
-  "devDependencies": {
-    "@docusaurus/module-type-aliases": "3.1.0",
-    "@docusaurus/types": "3.1.0"
-  },
-  "browserslist": {
-    "production": [
-      ">0.5%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 3 chrome version",
-      "last 3 firefox version",
-      "last 5 safari version"
-    ]
-  },
-  "engines": {
-    "node": ">=18.0"
+    "hexo": "^7.0.0",
+    "hexo-generator-archive": "^2.0.0",
+    "hexo-generator-category": "^2.0.0",
+    "hexo-generator-index": "^3.0.0",
+    "hexo-generator-tag": "^2.0.0",
+    "hexo-renderer-ejs": "^2.0.0",
+    "hexo-renderer-marked": "^6.0.0",
+    "hexo-renderer-stylus": "^3.0.0",
+    "hexo-server": "^3.0.0",
+    "hexo-theme-landscape": "^1.0.0"
   }
 }
