@@ -6,25 +6,18 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"time"
+	// "time"
 
 	"github.com/Trinoooo/eggie_kv/consts"
 )
 
-var opStrToOpType = map[string]consts.OperatorType{
-	"get": consts.OperatorTypeGet,
-	"GET": consts.OperatorTypeGet,
-	"set": consts.OperatorTypeSet,
-	"SET": consts.OperatorTypeSet,
-}
-
-func GetCommandHandle(url string, args []string) {
+func Get(url string, args []string) {
 	if len(args) <= 0 {
 		log.Println("error occur when marshal get command")
 		return
 	}
 	kvReq := &consts.KvRequest{
-		OperationType: opStrToOpType["get"],
+		OperationType: consts.OperatorTypeGet,
 		Key:           []byte(args[0]),
 	}
 	kvResp, ok := cmdPost(url, kvReq)
@@ -34,13 +27,13 @@ func GetCommandHandle(url string, args []string) {
 	log.Printf("# %s\n", string(kvResp.Data))
 }
 
-func SetCommandHandle(url string, args []string) {
+func Set(url string, args []string) {
 	if len(args) <= 0 {
 		log.Println("error occur when marshal set command")
 		return
 	}
 	kvReq := &consts.KvRequest{
-		OperationType: opStrToOpType["set"],
+		OperationType: consts.OperatorTypeSet,
 		Key:           []byte(args[0]),
 		Value:         []byte(args[1]),
 	}
@@ -61,7 +54,7 @@ func cmdPost(url string, kvReq *consts.KvRequest) (*consts.KvResponse, bool) {
 
 	// 服务器http无响应时，readline无法响应程序中断
 	client := http.Client{
-		Timeout: 5 * time.Second,
+		// Timeout: 5 * time.Second,
 	}
 
 	resp, err := client.Post(url, "application/json", bytes.NewBuffer(reqBytes))

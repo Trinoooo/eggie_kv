@@ -7,7 +7,7 @@ build-core:
 	go build -o eggie_kv_server main.go
 
 build-interactive-cli:
-	cd $(ProjectPath)/interactive/kv-cli && \
+	cd $(ProjectPath)/interactive/cli && \
 	go mod tidy && \
 	go build -o eggie_kv_client main.go
 

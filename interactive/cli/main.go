@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Trinoooo/eggie_kv/interactive/kv-cli/handle"
+	"github.com/Trinoooo/eggie_kv/interactive/cli/handle"
 	"github.com/chzyer/readline"
 	"github.com/urfave/cli/v2"
 )
@@ -136,9 +136,9 @@ func handleInput(input, url string) {
 	args := inputs[1:]
 	switch strings.ToLower(cmd) {
 	case "get":
-		handle.GetCommandHandle(url, args)
+		handle.Get(url, args)
 	case "set":
-		handle.SetCommandHandle(url, args)
+		handle.Set(url, args)
 	default:
 		log.Println("error occur when parse form input, err: Unspported command type ", cmd)
 		return
