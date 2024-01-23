@@ -2,16 +2,44 @@ package handle
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log"
 	"net/http"
-	// "time"
+	"net/url"
+	"strings"
 
 	"github.com/Trinoooo/eggie_kv/consts"
 )
 
-func Get(url string, args []string) {
+type ClientWrapper struct {
+	Url  *url.URL
+	Http *http.Client
+	Ctx  *context.Context
+}
+
+func (c *ClientWrapper) HandleInput(input string) {
+	inputs := strings.Fields(input)
+	if len(inputs) <= 0 {
+		log.Println("error occur when get command")
+		return
+	}
+
+	cmd := inputs[0]
+	args := inputs[1:]
+	switch strings.ToLower(cmd) {
+	case "get":
+		c.Get(args)
+	case "set":
+		c.Set(args)
+	default:
+		log.Println("error occur when parse form input, err: Unspported command type ", cmd)
+		return
+	}
+}
+
+func (c *ClientWrapper) Get(args []string) {
 	if len(args) <= 0 {
 		log.Println("error occur when marshal get command")
 		return
@@ -20,14 +48,14 @@ func Get(url string, args []string) {
 		OperationType: consts.OperatorTypeGet,
 		Key:           []byte(args[0]),
 	}
-	kvResp, ok := cmdPost(url, kvReq)
+	kvResp, ok := c.cmdPost(kvReq)
 	if !ok {
 		return
 	}
 	log.Printf("# %s\n", string(kvResp.Data))
 }
 
-func Set(url string, args []string) {
+func (c *ClientWrapper) Set(args []string) {
 	if len(args) <= 0 {
 		log.Println("error occur when marshal set command")
 		return
@@ -38,26 +66,28 @@ func Set(url string, args []string) {
 		Value:         []byte(args[1]),
 	}
 
-	kvResp, ok := cmdPost(url, kvReq)
+	kvResp, ok := c.cmdPost(kvReq)
 	if !ok {
 		return
 	}
 	log.Printf("# %s\n", string(kvResp.Data))
 }
 
-func cmdPost(url string, kvReq *consts.KvRequest) (*consts.KvResponse, bool) {
+func (c *ClientWrapper) cmdPost(kvReq *consts.KvRequest) (*consts.KvResponse, bool) {
 	reqBytes, err := json.Marshal(kvReq)
 	if err != nil {
 		log.Println("error occur when marshal req, err: ", err)
 		return nil, false
 	}
 
-	// 服务器http无响应时，readline无法响应程序中断
-	client := http.Client{
-		// Timeout: 5 * time.Second,
+	req, err := http.NewRequestWithContext(*c.Ctx, http.MethodPost, c.Url.String(), bytes.NewBuffer(reqBytes))
+	if err != nil {
+		log.Println("error occur when build http post, err", err)
+		return nil, false
 	}
+	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Post(url, "application/json", bytes.NewBuffer(reqBytes))
+	resp, err := c.Http.Do(req)
 	if err != nil {
 		log.Println("error occur when http post, err: ", err)
 		return nil, false

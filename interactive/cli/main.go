@@ -3,12 +3,17 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Trinoooo/eggie_kv/interactive/cli/handle"
@@ -84,7 +89,21 @@ func (wrapper *CliWrapper) withFlags() {
 
 func (wrapper *CliWrapper) withAction() {
 	wrapper.app.Action = func(ctx *cli.Context) error {
-		url := fmt.Sprintf("http://%s:%d/", ctx.String("host"), ctx.Int64("port"))
+		cancelCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		serverUrl, err := url.Parse(fmt.Sprintf("http://%s:%d/", ctx.String("host"), ctx.Int64("port")))
+		if err != nil {
+			log.Println("error occur when parse server url, err: ", err)
+			return nil
+		}
+
+		client := &handle.ClientWrapper{
+			Url:  serverUrl,
+			Http: &http.Client{},
+			Ctx:  &cancelCtx,
+		}
+
 		input, err := readline.NewEx(&readline.Config{
 			Prompt: "> ",
 			AutoComplete: readline.NewPrefixCompleter(
@@ -98,20 +117,33 @@ func (wrapper *CliWrapper) withAction() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		input.CaptureExitSignal()
+		defer input.Close()
+
+		cSignal := make(chan os.Signal, 1)
+		signal.Notify(cSignal, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			<-cSignal
+			cancel()
+		}()
+
 		for {
-			str, err := input.Readline()
-			if err != nil {
-				if errors.Is(err, readline.ErrInterrupt) || errors.Is(err, io.EOF) {
-					return errors.New("exit")
-				}
-				log.Println(err)
-				continue
-			}
-			if strings.EqualFold(str, "exit") {
+			select {
+			case <-cancelCtx.Done():
 				return nil
+			default:
+				str, err := input.Readline()
+				if err != nil {
+					if errors.Is(err, readline.ErrInterrupt) || errors.Is(err, io.EOF) {
+						return errors.New("exit")
+					}
+					log.Println(err)
+					continue
+				}
+				if strings.EqualFold(str, "exit") {
+					return nil
+				}
+				client.HandleInput(str)
 			}
-			handleInput(str, url)
 		}
 	}
 }
@@ -122,25 +154,5 @@ func (wrapper *CliWrapper) withAuthor() {
 			Name:  "Trino",
 			Email: "sujun.trinoooo@gmail.com",
 		},
-	}
-}
-
-func handleInput(input, url string) {
-	inputs := strings.Fields(input)
-	if len(inputs) <= 0 {
-		log.Println("error occur when get command")
-		return
-	}
-
-	cmd := inputs[0]
-	args := inputs[1:]
-	switch strings.ToLower(cmd) {
-	case "get":
-		handle.Get(url, args)
-	case "set":
-		handle.Set(url, args)
-	default:
-		log.Println("error occur when parse form input, err: Unspported command type ", cmd)
-		return
 	}
 }
