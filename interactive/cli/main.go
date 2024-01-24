@@ -3,27 +3,23 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
-	"github.com/Trinoooo/eggie_kv/consts"
-	"github.com/chzyer/readline"
-	"github.com/urfave/cli/v2"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
-)
 
-var opStrToOpType = map[string]consts.OperatorType{
-	"get": consts.OperatorTypeGet,
-	"GET": consts.OperatorTypeGet,
-	"set": consts.OperatorTypeSet,
-	"SET": consts.OperatorTypeSet,
-}
+	"github.com/Trinoooo/eggie_kv/interactive/cli/handle"
+	"github.com/chzyer/readline"
+	"github.com/urfave/cli/v2"
+)
 
 func main() {
 	wrapper := NewCliWrapper()
@@ -93,7 +89,21 @@ func (wrapper *CliWrapper) withFlags() {
 
 func (wrapper *CliWrapper) withAction() {
 	wrapper.app.Action = func(ctx *cli.Context) error {
-		url := fmt.Sprintf("http://%s:%d/", ctx.String("host"), ctx.Int64("port"))
+		cancelCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		serverUrl, err := url.Parse(fmt.Sprintf("http://%s:%d/", ctx.String("host"), ctx.Int64("port")))
+		if err != nil {
+			log.Println("error occur when parse server url, err: ", err)
+			return nil
+		}
+
+		client := &handle.ClientWrapper{
+			Url:  serverUrl,
+			Http: &http.Client{},
+			Ctx:  &cancelCtx,
+		}
+
 		input, err := readline.NewEx(&readline.Config{
 			Prompt: "> ",
 			AutoComplete: readline.NewPrefixCompleter(
@@ -107,63 +117,35 @@ func (wrapper *CliWrapper) withAction() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		input.CaptureExitSignal()
+		defer input.Close()
+
+		cSignal := make(chan os.Signal, 1)
+		signal.Notify(cSignal, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			<-cSignal
+			cancel()
+		}()
+
 		for {
-			str, err := input.Readline()
-			if err != nil {
-				if errors.Is(err, readline.ErrInterrupt) || errors.Is(err, io.EOF) {
-					return errors.New("exit")
-				}
-				log.Println(err)
-				continue
-			}
-			if strings.EqualFold(str, "exit") {
+			select {
+			case <-cancelCtx.Done():
 				return nil
+			default:
+				str, err := input.Readline()
+				if err != nil {
+					if errors.Is(err, readline.ErrInterrupt) || errors.Is(err, io.EOF) {
+						return errors.New("exit")
+					}
+					log.Println(err)
+					continue
+				}
+				if strings.EqualFold(str, "exit") {
+					return nil
+				}
+				client.HandleInput(str)
 			}
-			handleInput(str, url)
 		}
 	}
-}
-
-func handleInput(input, url string) {
-	var cmd, key string
-	_, err := fmt.Sscanf(input, "%s %s", &cmd, &key)
-	if err != nil {
-		log.Println("error occur when parse form input, err: ", err)
-		return
-	}
-
-	kvReq := &consts.KvRequest{
-		OperationType: opStrToOpType[cmd],
-		Key:           []byte(key),
-	}
-
-	reqBytes, err := json.Marshal(kvReq)
-	if err != nil {
-		log.Println("error occur when marshal req, err: ", err)
-		return
-	}
-
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(reqBytes))
-	if err != nil {
-		log.Println("error occur when http post, err: ", err)
-		return
-	}
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Println("error occur when read resp body bytes, err: ", err)
-		return
-	}
-
-	kvResp := &consts.KvResponse{}
-	err = json.Unmarshal(bodyBytes, kvResp)
-	if err != nil {
-		log.Println("error occur when unmarshal resp, err: ", err)
-		return
-	}
-
-	fmt.Printf("# %s\n", string(kvResp.Data))
 }
 
 func (wrapper *CliWrapper) withAuthor() {
