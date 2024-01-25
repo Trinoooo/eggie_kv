@@ -20,14 +20,17 @@ type Server struct {
 }
 
 func NewServer() (*Server, error) {
-	viper.AddConfigPath(consts.DefaultConfigPath)
 	srv := &Server{
 		operatorHandlers: map[consts.OperatorType]HandleFunc{},
 		mws:              make([]MiddlewareFunc, 0),
-		config:           viper.New(),
 	}
 
-	err := srv.withCore()
+	err := srv.withConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	err = srv.withCore()
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +89,18 @@ func (srv *Server) withCore() error {
 		return consts.BuildCoreErr
 	}
 	srv.core = c
+	return nil
+}
+
+func (srv *Server) withConfig() error {
+	srv.config = viper.New()
+	srv.config.AddConfigPath(consts.DefaultConfigPath)
+	srv.config.SetConfigName("config")
+	srv.config.SetConfigType("yaml")
+	err := srv.config.ReadInConfig()
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
