@@ -5,6 +5,6 @@ import (
 	"github.com/Trinoooo/eggie_kv/kv_storage/core/ragdoll"
 )
 
-var RegisterMap = map[string]iface.Builder{
+var BuilderMap = map[string]iface.Builder{
 	"ragdoll": ragdoll.New,
 }

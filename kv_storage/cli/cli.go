@@ -76,7 +76,7 @@ func NewWrapper() *Wrapper {
 	wrapper := &Wrapper{
 		app: &cli.App{
 			Name:    "eggie_kv",
-			Usage:   "a simple ragdoll store based on memory",
+			Usage:   "a simple kv store based on memory",
 			Version: "0.0.1.231216_alpha",
 		},
 	}

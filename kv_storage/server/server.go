@@ -80,7 +80,7 @@ func (srv *Server) withMiddleware(mw ...MiddlewareFunc) {
 }
 
 func (srv *Server) withCore() error {
-	coreBuilder := core.RegisterMap[srv.config.GetString(consts.Core)]
+	coreBuilder := core.BuilderMap[srv.config.GetString(consts.Core)]
 	c, err := coreBuilder(srv.config)
 	if err != nil {
 		return consts.BuildCoreErr

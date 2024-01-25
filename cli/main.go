@@ -59,7 +59,7 @@ func NewCliWrapper() *CliWrapper {
 	wrapper := &CliWrapper{
 		app: &cli.App{
 			Name:    "eggie_kv_client",
-			Usage:   "client for - a simple ragdoll store based on memory",
+			Usage:   "client for - a simple kv store based on memory",
 			Version: "0.0.1.231216_alpha",
 		},
 	}
