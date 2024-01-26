@@ -1,10 +1,5 @@
 package consts
 
-import (
-	"fmt"
-	"os"
-)
-
 const (
 	B = 1 << (iota * 10)
 	KB
@@ -52,8 +47,3 @@ type KvResponse struct {
 	Message string `json:"message"`
 	Data    []byte `json:"data"`
 }
-
-var (
-	BaseDir = fmt.Sprintf("%s/eggie_kv", os.Getenv(Home))
-	TmpDir  = "/tmp/eggie_kv"
-)

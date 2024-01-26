@@ -40,4 +40,6 @@ var (
 
 	GetErr = &KvErr{msg: "error occur when get value", code: 100020}
 	SetErr = &KvErr{msg: "error occur when set value", code: 100021}
+
+	BuildCoreErr = &KvErr{msg: "build core failed", code: 200001}
 )
