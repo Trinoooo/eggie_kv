@@ -23,7 +23,7 @@ func TestLog_Write(t *testing.T) {
 		SetDataPerm(0660).
 		SetSegmentCacheSize(5).
 		SetSegmentSize(uint64(segmentSize))
-	wal, err := Open("../../test_data/wal/", opts)
+	wal, err := Open("../../../../test_data/wal/", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,12 +47,12 @@ func TestLog_Write(t *testing.T) {
 // * 测试读日志
 // * opt用默认的
 func TestLog_Read(t *testing.T) {
-	wal, err := Open("../../test_data/wal/", nil)
+	wal, err := Open("../../../../test_data/wal/", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	data, err := wal.Read(10)
+	data, err := wal.Read(100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestLog_Sync(t *testing.T) {
 	opts := NewOptions().
 		SetSegmentSize(consts.KB).
 		SetNoSync()
-	wal, err := Open("../../test_data/wal/", opts)
+	wal, err := Open("../../../../test_data/wal/", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestLog_Sync(t *testing.T) {
 }
 
 func TestLog_Truncate(t *testing.T) {
-	wal, err := Open("../../test_data/wal/", nil)
+	wal, err := Open("../../../../test_data/wal/", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,5 +108,32 @@ func TestLog_Truncate(t *testing.T) {
 	err = wal.Close()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func BenchmarkWal_Write(b *testing.B) {
+	segmentSize := consts.KB
+	opts := NewOptions().
+		SetDirPerm(0770).
+		SetDataPerm(0660).
+		SetSegmentCacheSize(5).
+		SetSegmentSize(uint64(segmentSize))
+	wal, err := Open("../../../../test_data/wal/", opts)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	for i := 0; i < b.N; i++ {
+		data := []byte{1, 3, 5, 2, 4, 6}
+		idx, err := wal.Write(data)
+		if err != nil {
+			b.Fatal(err)
+		}
+		log.Info("finish append block, log idx:", idx)
+	}
+
+	err = wal.Close()
+	if err != nil {
+		b.Fatal(err)
 	}
 }

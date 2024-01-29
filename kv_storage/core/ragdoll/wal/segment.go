@@ -1,7 +1,6 @@
 package wal
 
 import (
-	"bufio"
 	"crypto/md5"
 	"encoding/binary"
 	"fmt"
@@ -18,12 +17,22 @@ type bpos struct {
 	end   int64
 }
 
+// TODO: 补充corrupt处理
 type segment struct {
-	fd           *os.File
-	bbuf         []byte
-	bpos         []*bpos
-	path         string
-	startBlockId int64
+	fd           *os.File // fd segment文件描述符
+	path         string   // path segment文件路径
+	startBlockId int64    // startBlockId segment起始blockId
+	// bbuf segment中存储的数据内容
+	// segment存储的最大容量取决于外部，存储结构如下：
+	// | block #1 | block #2 | 0000 |
+	// 当文件剩余容量不足以再写下一个完整block时
+	// 文件末尾剩余内容不再使用，保证文件开头是一个完整的block
+	bbuf []byte
+	// bpos 指示bbuf中每个block的位置
+	// start 表示起始偏移量
+	// end 表示结束偏移量
+	bpos           []*bpos
+	nextByteToSync int64 // nextByteToSync 下一个要同步的字节偏移量
 }
 
 func newSegment(path string) *segment {
@@ -38,32 +47,34 @@ func (seg *segment) getStartBlockId() int64 {
 }
 
 func (seg *segment) open(perm os.FileMode) error {
-	fd, err := utils.CheckAndCreateFile(seg.path, os.O_RDWR|os.O_CREATE, perm)
+	// 如果是新segment文件，则创建一个新文件
+	// 否则以追加模式进行操作
+	// 指定操作包含读和写
+	fd, err := utils.CheckAndCreateFile(seg.path, os.O_RDWR|os.O_CREATE|os.O_APPEND, perm)
 	if err != nil {
-		log.Fatalln(err)
+		log.Error(err)
 		return consts.OpenFileErr
 	}
 
 	seg.fd = fd
 	all, err := io.ReadAll(seg.fd)
 	if err != nil {
-		return err
-	}
-
-	_, err = seg.fd.Seek(0, 0)
-	if err != nil {
+		log.Error(err)
 		return err
 	}
 
 	bps, bbf, err := loadBinary(all)
 	if err != nil {
+		log.Error(err)
 		return err
 	}
 
 	seg.bbuf = bbf
 	seg.bpos = bps
+	seg.nextByteToSync = int64(len(seg.bbuf))
 	seg.startBlockId, err = baseToBlockId(filepath.Base(seg.path))
 	if err != nil {
+		log.Error(err)
 		return err
 	}
 	return nil
@@ -102,25 +113,25 @@ func (seg *segment) write(data []byte) error {
 // sync 持久化数据到磁盘
 // todo: 文件完整性
 func (seg *segment) sync() error {
-	writer := bufio.NewWriter(seg.fd)
-	for _, pos := range seg.bpos {
-		_, err := writer.Write(seg.bbuf[pos.start:pos.end])
+	var written int64
+	lenToWrite := int64(len(seg.bbuf)) - seg.nextByteToSync
+	for {
+		n, err := seg.fd.Write(seg.bbuf[seg.nextByteToSync:])
 		if err != nil {
+			log.Error(err)
 			return err
 		}
-	}
-	err := writer.Flush()
-	if err != nil {
-		return err
-	}
 
-	err = seg.fd.Sync()
-	if err != nil {
-		return err
+		written += int64(n)
+		if written == lenToWrite {
+			break
+		}
 	}
+	seg.nextByteToSync = int64(len(seg.bbuf))
 
-	_, err = seg.fd.Seek(0, 0)
+	err := seg.fd.Sync()
 	if err != nil {
+		log.Error(err)
 		return err
 	}
 
@@ -142,9 +153,28 @@ func (seg *segment) read(idx int64) ([]byte, error) {
 }
 
 func (seg *segment) truncate(idx int64) error {
-	seg.bpos = seg.bpos[idx-seg.startBlockId:]
-	seg.bbuf = seg.bbuf[seg.bpos[0].start:]
-	err := seg.fd.Truncate(0)
+	posOffset := idx - seg.startBlockId
+	firstPosAfterTruncate := seg.bpos[posOffset]
+	seg.bpos = seg.bpos[posOffset:]
+	seg.bbuf = seg.bbuf[firstPosAfterTruncate.start:]
+	// fd.Truncate 内部调用Ftruncate
+	// 是相对当前文件offset改变文件大小
+	_, err := seg.fd.Seek(firstPosAfterTruncate.start, 0)
+	if err != nil {
+		log.Error(err)
+		return err
+	}
+
+	// 保留截断后的文件大小
+	lbuf := int64(len(seg.bbuf))
+	err = seg.fd.Truncate(lbuf)
+	if err != nil {
+		return err
+	}
+	seg.nextByteToSync = lbuf
+	oldPath := seg.path
+	seg.path = filepath.Join(filepath.Dir(seg.path), blockIdToBase(idx))
+	err = os.Rename(oldPath, seg.path)
 	if err != nil {
 		return err
 	}
@@ -164,10 +194,10 @@ func baseToBlockId(base string) (int64, error) {
 	return firstBlockIdOfSegment, nil
 }
 
-// 存储在文件中的block结构：
-// |	length 8字节	|	checksum 16字节	|
-// |			payload x字节			|
 // buildBinary 日志数据 -> 格式化二进制数据
+// 存储在文件中的block结构：
+// |	length 8字节		|	checksum 16字节	|
+// |				payload x字节			|
 func buildBinary(data []byte) []byte {
 	length := int64(len(data))
 	buf := make([]byte, 24)
@@ -183,8 +213,8 @@ func buildBinary(data []byte) []byte {
 // loadBinary 从文件装载格式化二进制数据
 func loadBinary(raw []byte) ([]*bpos, []byte, error) {
 	var start int64 = 0
-	bps := []*bpos{}
-	bbf := []byte{}
+	var bps []*bpos
+	var bbf []byte
 	for {
 		if int64(len(raw)) == start {
 			break

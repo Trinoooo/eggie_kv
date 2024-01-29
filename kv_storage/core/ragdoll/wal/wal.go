@@ -356,5 +356,9 @@ func (wal *Log) findSegment(idx int64) *segment {
 		return wal.segments[i].getStartBlockId() >= idx
 	})
 
-	return wal.segments[target-1]
+	if target != 0 {
+		target -= 1
+	}
+
+	return wal.segments[target]
 }

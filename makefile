@@ -6,12 +6,12 @@ build-kv-storage:
 	go mod tidy && \
 	go build -o eggie_kv_server main.go
 
-build-interactive-cli:
+build-cli:
 	cd $(ProjectPath)/cli && \
 	go mod tidy && \
 	go build -o eggie_kv_client main.go
 
-build-all: build-core build-interactive-cli
+build-all: build-kv-storage build-cli
 
 # 测试
 TestPackage := $(test_package)
@@ -22,3 +22,9 @@ test-with-cover:
 	go tool cover -html=$(TestCoverageFile) -o=$(TestCoverageHtml) && \
 	rm -f $(TestCoverageFile) && \
 	open $(TestCoverageHtml)
+
+BenchmarkPackage := $(benchmark_package)
+BenchmarkTarget := $(benchmark_target)
+BenchmarkCount := $(benchmark_count)
+benchmark:
+	go test $(BenchmarkPackage) -benchmem -bench=$(BenchmarkTarget) -count=$(BenchmarkCount)
