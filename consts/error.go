@@ -37,6 +37,7 @@ var (
 	SegmentFullErr             = &KvErr{msg: "segment file full", code: 100021}
 	NotFoundErr                = &KvErr{msg: "not found", code: 100022}
 	CorruptErr                 = &KvErr{msg: "file content corrupt", code: 100023}
+	WalFullErr                 = &KvErr{msg: "wal log full", code: 100024}
 
 	GetErr = &KvErr{msg: "error occur when get value", code: 100020}
 	SetErr = &KvErr{msg: "error occur when set value", code: 100021}

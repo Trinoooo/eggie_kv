@@ -26,5 +26,8 @@ test-with-cover:
 BenchmarkPackage := $(benchmark_package)
 BenchmarkTarget := $(benchmark_target)
 BenchmarkCount := $(benchmark_count)
+BenchmarkProfDir=$(BenchmarkPackage)/benchmark
 benchmark:
-	go test $(BenchmarkPackage) -benchmem -bench=$(BenchmarkTarget) -count=$(BenchmarkCount)
+	go test $(BenchmarkPackage) -benchmem -bench=$(BenchmarkTarget) -count=$(BenchmarkCount) \
+	-blockprofile $(BenchmarkProfDir)/block.out -cpuprofile $(BenchmarkProfDir)/cpu.out -memprofile $(BenchmarkProfDir)/mem.out \
+    -mutexprofile $(BenchmarkProfDir)/mutex.out -trace $(BenchmarkProfDir)/trace.out

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/Trinoooo/eggie_kv/consts"
 	"github.com/Trinoooo/eggie_kv/utils"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"os"
 	"path/filepath"
@@ -52,20 +51,17 @@ func (seg *segment) open(perm os.FileMode) error {
 	// 指定操作包含读和写
 	fd, err := utils.CheckAndCreateFile(seg.path, os.O_RDWR|os.O_CREATE|os.O_APPEND, perm)
 	if err != nil {
-		log.Error(err)
 		return consts.OpenFileErr
 	}
 
 	seg.fd = fd
 	all, err := io.ReadAll(seg.fd)
 	if err != nil {
-		log.Error(err)
 		return err
 	}
 
 	bps, bbf, err := loadBinary(all)
 	if err != nil {
-		log.Error(err)
 		return err
 	}
 
@@ -74,7 +70,6 @@ func (seg *segment) open(perm os.FileMode) error {
 	seg.nextByteToSync = int64(len(seg.bbuf))
 	seg.startBlockId, err = baseToBlockId(filepath.Base(seg.path))
 	if err != nil {
-		log.Error(err)
 		return err
 	}
 	return nil
@@ -116,22 +111,20 @@ func (seg *segment) sync() error {
 	var written int64
 	lenToWrite := int64(len(seg.bbuf)) - seg.nextByteToSync
 	for {
+		if written == lenToWrite {
+			break
+		}
 		n, err := seg.fd.Write(seg.bbuf[seg.nextByteToSync:])
 		if err != nil {
-			log.Error(err)
 			return err
 		}
 
 		written += int64(n)
-		if written == lenToWrite {
-			break
-		}
 	}
 	seg.nextByteToSync = int64(len(seg.bbuf))
 
 	err := seg.fd.Sync()
 	if err != nil {
-		log.Error(err)
 		return err
 	}
 
@@ -161,7 +154,6 @@ func (seg *segment) truncate(idx int64) error {
 	// 是相对当前文件offset改变文件大小
 	_, err := seg.fd.Seek(firstPosAfterTruncate.start, 0)
 	if err != nil {
-		log.Error(err)
 		return err
 	}
 
@@ -246,7 +238,8 @@ func parseBinary(raw []byte) ([]byte, int64, error) {
 	length, _ := binary.Varint(raw[:8])
 	checksum := raw[8:24]
 	end := 24 + length
-	data := raw[24:end]
+	data := make([]byte, end-24)
+	copy(data, raw[24:end])
 	cc := md5.Sum(append(data, raw[:8]...))
 	for i := 0; i < len(checksum); i++ {
 		if checksum[i] != cc[i] {

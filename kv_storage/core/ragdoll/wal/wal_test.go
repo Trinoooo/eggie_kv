@@ -17,7 +17,7 @@ func TestMain(m *testing.M) {
 // * 测试写入与从文件中恢复（日志文件夹下存在数据文件）
 // * opt采用自定义
 func TestLog_Write(t *testing.T) {
-	segmentSize := consts.KB
+	segmentSize := consts.GB
 	opts := NewOptions().
 		SetDirPerm(0770).
 		SetDataPerm(0660).
@@ -30,11 +30,10 @@ func TestLog_Write(t *testing.T) {
 
 	for i := 0; i < 100; i++ {
 		data := []byte{1, 3, 5, 2, 4, 6}
-		idx, err := wal.Write(data)
+		_, err := wal.Write(data)
 		if err != nil {
 			t.Fatal(err)
 		}
-		log.Info("finish append block, log idx:", idx)
 	}
 
 	err = wal.Close()
@@ -52,11 +51,10 @@ func TestLog_Read(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, err := wal.Read(100)
+	_, err = wal.Read(100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	log.Info(data)
 
 	err = wal.Close()
 	if err != nil {
@@ -68,7 +66,7 @@ func TestLog_Read(t *testing.T) {
 // * opt设置不主动刷盘，日志持久化的时机只有单数据文件满以及主动调用wal.Sync
 func TestLog_Sync(t *testing.T) {
 	opts := NewOptions().
-		SetSegmentSize(consts.KB).
+		SetSegmentSize(consts.GB).
 		SetNoSync()
 	wal, err := Open("../../../../test_data/wal/", opts)
 	if err != nil {
@@ -76,11 +74,10 @@ func TestLog_Sync(t *testing.T) {
 	}
 
 	for i := 0; i < 100; i++ {
-		idx, err := wal.Write([]byte{1, 3, 5, 2, 4, 6})
+		_, err := wal.Write([]byte{1, 3, 5, 2, 4, 6})
 		if err != nil {
 			t.Fatal(err)
 		}
-		log.Info("finish append block, log idx:", idx)
 	}
 
 	err = wal.Sync()
@@ -111,25 +108,165 @@ func TestLog_Truncate(t *testing.T) {
 	}
 }
 
-func BenchmarkWal_Write(b *testing.B) {
-	segmentSize := consts.KB
+var testList = [][]byte{
+	{1, 3, 5, 2, 4, 6},
+	{1, 2, 3, 4, 5, 6, 7, 8, 9, 0},
+	{1},
+	{
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+	},
+	{
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+	},
+}
+
+func BenchmarkWal_Write_6byte(b *testing.B) {
+	benchmarkInner(b, testList[0])
+}
+
+func BenchmarkWal_Write_10byte(b *testing.B) {
+	benchmarkInner(b, testList[1])
+}
+
+func BenchmarkWal_Write_1byte(b *testing.B) {
+	benchmarkInner(b, testList[2])
+}
+
+func BenchmarkWal_Write_100byte(b *testing.B) {
+	benchmarkInner(b, testList[3])
+}
+
+func BenchmarkWal_Write_1000byte(b *testing.B) {
+	benchmarkInner(b, testList[4])
+}
+
+func benchmarkInner(b *testing.B, data []byte) {
+	segmentSize := consts.MB
 	opts := NewOptions().
 		SetDirPerm(0770).
 		SetDataPerm(0660).
 		SetSegmentCacheSize(5).
-		SetSegmentSize(uint64(segmentSize))
+		SetSegmentSize(uint64(segmentSize)).
+		SetNoSync()
 	wal, err := Open("../../../../test_data/wal/", opts)
 	if err != nil {
 		b.Fatal(err)
 	}
 
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		data := []byte{1, 3, 5, 2, 4, 6}
-		idx, err := wal.Write(data)
+		_, err := wal.Write(data)
 		if err != nil {
 			b.Fatal(err)
 		}
-		log.Info("finish append block, log idx:", idx)
 	}
 
 	err = wal.Close()

@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	mask = 0x010814
+	mask = 1e10
 )
 
 var DefaultOptions = &Options{
@@ -228,9 +228,13 @@ func (wal *Log) Write(data []byte) (int64, error) {
 		return 0, consts.CorruptErr
 	}
 
-	// todo: 循环写日志
-	// wal.lastBlockIdx = (wal.lastBlockIdx + 1) % mask
-	wal.lastBlockIdx += 1
+	wal.lastBlockIdx = (wal.lastBlockIdx + 1) % mask
+	// 循环写日志时可能日志文件夹下内容写满
+	// 需要考虑lastBlockIdx追上firstBlockIdx的情况
+	if wal.lastBlockIdx == wal.firstBlockIdx {
+		return 0, consts.WalFullErr
+	}
+
 	if uint64(wal.activeSegment.size())+uint64(len(buildBinary(data))) > wal.opts.segmentSize {
 		err := wal.activeSegment.close()
 		if err != nil {
