@@ -57,9 +57,9 @@
 				
 				<option value="file0">github.com/Trinoooo/eggie_kv/kv_storage/core/ragdoll/wal/lru.go (100.0%)</option>
 				
-				<option value="file1">github.com/Trinoooo/eggie_kv/kv_storage/core/ragdoll/wal/segment.go (80.5%)</option>
+				<option value="file1">github.com/Trinoooo/eggie_kv/kv_storage/core/ragdoll/wal/segment.go (85.0%)</option>
 				
-				<option value="file2">github.com/Trinoooo/eggie_kv/kv_storage/core/ragdoll/wal/wal.go (66.7%)</option>
+				<option value="file2">github.com/Trinoooo/eggie_kv/kv_storage/core/ragdoll/wal/wal.go (63.0%)</option>
 				
 				</select>
 			</div>
@@ -144,10 +144,15 @@ import (
         "fmt"
         "github.com/Trinoooo/eggie_kv/consts"
         "github.com/Trinoooo/eggie_kv/utils"
-        log "github.com/sirupsen/logrus"
         "io"
         "os"
         "path/filepath"
+)
+
+const (
+        headerLengthSize  = 8  // 记录头中length字段长度
+        headerSummarySize = 16 // 记录头中checksum字段长度
+        headerSize        = 24 // 记录头总长度
 )
 
 type bpos struct {
@@ -171,11 +176,13 @@ type segment struct {
         // end 表示结束偏移量
         bpos           []*bpos
         nextByteToSync int64 // nextByteToSync 下一个要同步的字节偏移量
+        maxSize        int64 // maxSize segment文件最大体积
 }
 
-func newSegment(path string) *segment <span class="cov8" title="1">{
+func newSegment(path string, maxSize int64) *segment <span class="cov8" title="1">{
         seg := &amp;segment{}
         seg.path = path
+        seg.maxSize = maxSize
         return seg
 }</span>
 
@@ -190,20 +197,17 @@ func (seg *segment) open(perm os.FileMode) error <span class="cov8" title="1">{
         // 指定操作包含读和写
         fd, err := utils.CheckAndCreateFile(seg.path, os.O_RDWR|os.O_CREATE|os.O_APPEND, perm)
         if err != nil </span><span class="cov0" title="0">{
-                log.Error(err)
                 return consts.OpenFileErr
         }</span>
 
         <span class="cov8" title="1">seg.fd = fd
         all, err := io.ReadAll(seg.fd)
         if err != nil </span><span class="cov0" title="0">{
-                log.Error(err)
                 return err
         }</span>
 
         <span class="cov8" title="1">bps, bbf, err := loadBinary(all)
         if err != nil </span><span class="cov0" title="0">{
-                log.Error(err)
                 return err
         }</span>
 
@@ -212,7 +216,6 @@ func (seg *segment) open(perm os.FileMode) error <span class="cov8" title="1">{
         seg.nextByteToSync = int64(len(seg.bbuf))
         seg.startBlockId, err = baseToBlockId(filepath.Base(seg.path))
         if err != nil </span><span class="cov0" title="0">{
-                log.Error(err)
                 return err
         }</span>
         <span class="cov8" title="1">return nil</span>
@@ -235,18 +238,22 @@ func (seg *segment) close() error <span class="cov8" title="1">{
 }
 
 // write 写日志到数据文件中。
-// segment数据文件不知道自己的存储上限，由外层使用者控制
 func (seg *segment) write(data []byte) error <span class="cov8" title="1">{
         b := buildBinary(data)
+        lb := int64(len(b))
         lbbf := int64(len(seg.bbuf))
-        seg.bpos = append(seg.bpos, &amp;bpos{
+        if lb+lbbf &gt; seg.maxSize </span><span class="cov0" title="0">{
+                return consts.SegmentFullErr
+        }</span>
+
+        <span class="cov8" title="1">seg.bpos = append(seg.bpos, &amp;bpos{
                 start: lbbf,
-                end:   lbbf + int64(len(b)),
+                end:   lbbf + lb,
         })
 
         seg.bbuf = append(seg.bbuf, b...)
-        return nil
-}</span>
+        return nil</span>
+}
 
 // sync 持久化数据到磁盘
 // todo: 文件完整性
@@ -254,36 +261,34 @@ func (seg *segment) sync() error <span class="cov8" title="1">{
         var written int64
         lenToWrite := int64(len(seg.bbuf)) - seg.nextByteToSync
         for </span><span class="cov8" title="1">{
-                n, err := seg.fd.Write(seg.bbuf[seg.nextByteToSync:])
-                if err != nil </span><span class="cov0" title="0">{
-                        log.Error(err)
-                        return err
-                }</span>
-
-                <span class="cov8" title="1">written += int64(n)
                 if written == lenToWrite </span><span class="cov8" title="1">{
                         break</span>
                 }
+                <span class="cov8" title="1">n, err := seg.fd.Write(seg.bbuf[seg.nextByteToSync:])
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                <span class="cov8" title="1">written += int64(n)</span>
         }
         <span class="cov8" title="1">seg.nextByteToSync = int64(len(seg.bbuf))
 
         err := seg.fd.Sync()
         if err != nil </span><span class="cov0" title="0">{
-                log.Error(err)
                 return err
         }</span>
 
         <span class="cov8" title="1">return nil</span>
 }
 
-func (seg *segment) size() int64 <span class="cov8" title="1">{
+func (seg *segment) size() int64 <span class="cov0" title="0">{
         return int64(len(seg.bbuf))
 }</span>
 
 func (seg *segment) read(idx int64) ([]byte, error) <span class="cov8" title="1">{
         for inner, pos := range seg.bpos </span><span class="cov8" title="1">{
                 if seg.startBlockId+int64(inner) == idx </span><span class="cov8" title="1">{
-                        return seg.bbuf[pos.start:pos.end], nil
+                        return seg.bbuf[pos.start+headerSize : pos.end], nil
                 }</span>
         }
 
@@ -299,7 +304,6 @@ func (seg *segment) truncate(idx int64) error <span class="cov8" title="1">{
         // 是相对当前文件offset改变文件大小
         _, err := seg.fd.Seek(firstPosAfterTruncate.start, 0)
         if err != nil </span><span class="cov0" title="0">{
-                log.Error(err)
                 return err
         }</span>
 
@@ -338,11 +342,15 @@ func baseToBlockId(base string) (int64, error) <span class="cov8" title="1">{
 // |                                payload x字节                        |
 func buildBinary(data []byte) []byte <span class="cov8" title="1">{
         length := int64(len(data))
-        buf := make([]byte, 24)
-        binary.PutVarint(buf[:8], length)
-        checksum := md5.Sum(append(data, buf[:8]...))
+        // prof: 避免buf重分配
+        buf := make([]byte, headerSize, headerSize+length)
+        binary.PutVarint(buf[:headerLengthSize], length)
+        var dataAndLength []byte
+        dataAndLength = append(dataAndLength, data...)
+        dataAndLength = append(dataAndLength, buf[:headerLengthSize]...)
+        checksum := md5.Sum(dataAndLength)
         for i := 0; i &lt; len(checksum); i++ </span><span class="cov8" title="1">{
-                buf[8+i] = checksum[i]
+                buf[headerLengthSize+i] = checksum[i]
         }</span>
         <span class="cov8" title="1">buf = append(buf, data...)
         return buf</span>
@@ -351,8 +359,9 @@ func buildBinary(data []byte) []byte <span class="cov8" title="1">{
 // loadBinary 从文件装载格式化二进制数据
 func loadBinary(raw []byte) ([]*bpos, []byte, error) <span class="cov8" title="1">{
         var start int64 = 0
-        var bps []*bpos
-        var bbf []byte
+        // prof: 粗拍一个cap，避免小数据段导致的频繁重分配问题
+        bps := make([]*bpos, 0, 512)
+        bbf := make([]byte, 0, 5*consts.KB)
         for </span><span class="cov8" title="1">{
                 if int64(len(raw)) == start </span><span class="cov8" title="1">{
                         break</span>
@@ -377,15 +386,17 @@ func loadBinary(raw []byte) ([]*bpos, []byte, error) <span class="cov8" title="1
 // parseBinary 解析单个格式化二进制数据 -&gt; 日志数据
 func parseBinary(raw []byte) ([]byte, int64, error) <span class="cov8" title="1">{
         // length + chechsum
-        if len(raw) &lt; 24 </span><span class="cov0" title="0">{
+        if len(raw) &lt; headerSize </span><span class="cov0" title="0">{
                 return nil, 0, consts.CorruptErr
         }</span>
 
-        <span class="cov8" title="1">length, _ := binary.Varint(raw[:8])
-        checksum := raw[8:24]
-        end := 24 + length
-        data := raw[24:end]
-        cc := md5.Sum(append(data, raw[:8]...))
+        <span class="cov8" title="1">length, _ := binary.Varint(raw[:headerLengthSize])
+        checksum := raw[headerLengthSize:headerSummarySize]
+        end := headerSize + length
+        var dataAndLength []byte
+        dataAndLength = append(dataAndLength, raw[headerSize:end]...)
+        dataAndLength = append(dataAndLength, raw[:headerLengthSize]...)
+        cc := md5.Sum(dataAndLength)
         for i := 0; i &lt; len(checksum); i++ </span><span class="cov8" title="1">{
                 if checksum[i] != cc[i] </span><span class="cov0" title="0">{
                         return nil, 0, consts.CorruptErr
@@ -409,7 +420,7 @@ import (
 )
 
 const (
-        mask = 0x010814
+        mask = 1e10
 )
 
 var DefaultOptions = &amp;Options{
@@ -425,8 +436,8 @@ type Options struct {
         // dirPerm 先行日志目录文件权限位
         // dataPerm 先行日志数据文件权限位
         dataPerm, dirPerm os.FileMode
-        segmentSize       uint64 // maxSegmentSize segment数据文件最大大小
-        segmentCacheSize  int    // 内存中缓存的segment内容数量
+        segmentSize       int64 // maxSegmentSize segment数据文件最大大小
+        segmentCacheSize  int   // 内存中缓存的segment内容数量
         // noSync 当设置为true时，只有segment写满
         // 才持久化到磁盘。可以提高写性能，但需要承担
         // 数据丢失的风险。
@@ -447,7 +458,7 @@ func (opts *Options) SetDirPerm(dirPerm os.FileMode) *Options <span class="cov8"
         return opts
 }</span>
 
-func (opts *Options) SetSegmentSize(segmentSize uint64) *Options <span class="cov8" title="1">{
+func (opts *Options) SetSegmentSize(segmentSize int64) *Options <span class="cov8" title="1">{
         opts.segmentSize = segmentSize
         return opts
 }</span>
@@ -528,12 +539,12 @@ func Open(dirPath string, opts *Options) (*Log, error) <span class="cov8" title=
 func (wal *Log) init() error <span class="cov8" title="1">{
         // 检查目录是否存在，如不存在则创建
         stat, err := os.Stat(wal.path)
-        if errors.Is(err, os.ErrNotExist) </span><span class="cov0" title="0">{
+        if errors.Is(err, os.ErrNotExist) </span><span class="cov8" title="1">{
                 if err := os.MkdirAll(wal.path, wal.opts.dirPerm); err != nil </span><span class="cov0" title="0">{
                         return consts.MkdirErr
                 }</span>
 
-                <span class="cov0" title="0">stat, err = os.Stat(wal.path)
+                <span class="cov8" title="1">stat, err = os.Stat(wal.path)
                 if err != nil </span><span class="cov0" title="0">{
                         return consts.FileStatErr
                 }</span>
@@ -560,7 +571,7 @@ func (wal *Log) init() error <span class="cov8" title="1">{
                         return filepath.SkipDir
                 }</span>
 
-                <span class="cov8" title="1">wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, de.Name())))
+                <span class="cov8" title="1">wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, de.Name()), wal.opts.segmentSize))
                 firstBlockIdOfSegment, err := baseToBlockId(de.Name())
                 if err != nil </span><span class="cov0" title="0">{
                         return err
@@ -573,12 +584,13 @@ func (wal *Log) init() error <span class="cov8" title="1">{
         }</span>
 
         // 目录下没有数据文件
-        <span class="cov8" title="1">if len(wal.segments) == 0 </span><span class="cov0" title="0">{
-                first := newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx)))
+        <span class="cov8" title="1">if len(wal.segments) == 0 </span><span class="cov8" title="1">{
+                wal.firstBlockIdx = wal.lastBlockIdx
+                first := newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx)), wal.opts.segmentSize)
                 wal.segments = append(wal.segments, first)
                 wal.activeSegment = first
         }</span> else<span class="cov8" title="1"> {
-                sort.Slice(wal.segments, func(i, j int) bool </span><span class="cov8" title="1">{
+                sort.Slice(wal.segments, func(i, j int) bool </span><span class="cov0" title="0">{
                         return wal.segments[i].getStartBlockId() &lt; wal.segments[j].getStartBlockId()
                 }</span>)
                 <span class="cov8" title="1">wal.activeSegment = wal.segments[len(wal.segments)-1]</span>
@@ -615,6 +627,10 @@ func (wal *Log) Close() (err error) <span class="cov8" title="1">{
         return</span>
 }
 
+// Write 写入wal日志数据
+// 当返回 WalFullErr 错误时意味着wal日志文件夹下存储内容已满
+// 外部使用者应当读取并截断早时写入的日志数据
+// 当返回 WalFullErr 错误时，wal不会关闭，因此对wal的操作是安全的
 func (wal *Log) Write(data []byte) (int64, error) <span class="cov8" title="1">{
         wal.mu.Lock()
         defer wal.mu.Unlock()
@@ -625,27 +641,39 @@ func (wal *Log) Write(data []byte) (int64, error) <span class="cov8" title="1">{
                 return 0, consts.CorruptErr
         }</span>
 
-        // todo: 循环写日志
-        // wal.lastBlockIdx = (wal.lastBlockIdx + 1) % mask
-        <span class="cov8" title="1">wal.lastBlockIdx += 1
-        if uint64(wal.activeSegment.size())+uint64(len(buildBinary(data))) &gt; wal.opts.segmentSize </span><span class="cov8" title="1">{
-                err := wal.activeSegment.close()
-                if err != nil </span><span class="cov0" title="0">{
-                        return 0, err
-                }</span>
-
-                <span class="cov8" title="1">wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx))))
-                wal.activeSegment = wal.segments[len(wal.segments)-1]
-                err = wal.activeSegment.open(wal.opts.dataPerm)
-                if err != nil </span><span class="cov0" title="0">{
-                        return 0, err
-                }</span>
-        }
+        <span class="cov8" title="1">wal.lastBlockIdx = (wal.lastBlockIdx + 1) % mask
+        // 循环写日志时可能日志文件夹下内容写满
+        // 需要考虑lastBlockIdx追上firstBlockIdx的情况
+        if wal.lastBlockIdx == wal.firstBlockIdx </span><span class="cov0" title="0">{
+                return 0, consts.WalFullErr
+        }</span>
 
         <span class="cov8" title="1">err := wal.activeSegment.write(data)
         if err != nil </span><span class="cov0" title="0">{
-                return 0, err
-        }</span>
+                // 如果当前segment满了
+                // 那么新开一个segment
+                if errors.Is(err, consts.SegmentFullErr) </span><span class="cov0" title="0">{
+                        err := wal.activeSegment.close()
+                        if err != nil </span><span class="cov0" title="0">{
+                                return 0, err
+                        }</span>
+
+                        <span class="cov0" title="0">wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx)), wal.opts.segmentSize))
+                        wal.activeSegment = wal.segments[len(wal.segments)-1]
+                        err = wal.activeSegment.open(wal.opts.dataPerm)
+                        if err != nil </span><span class="cov0" title="0">{
+                                return 0, err
+                        }</span>
+
+                        // 如果segmentSize设置小于一次单wal日志数据最大体积
+                        // 那么可能出现新建一个segment也写入失败的问题
+                        <span class="cov0" title="0">err = wal.activeSegment.write(data)
+                        if err != nil </span><span class="cov0" title="0">{
+                                return 0, err
+                        }</span>
+                }
+                <span class="cov0" title="0">return 0, err</span>
+        }
 
         <span class="cov8" title="1">if !wal.opts.noSync </span><span class="cov8" title="1">{
                 err = wal.activeSegment.sync()
@@ -667,21 +695,23 @@ func (wal *Log) Read(idx int64) ([]byte, error) <span class="cov8" title="1">{
                 return nil, consts.CorruptErr
         }</span>
 
-        <span class="cov8" title="1">if idx &lt; wal.firstBlockIdx || idx &gt; wal.lastBlockIdx </span><span class="cov0" title="0">{
-                return nil, consts.InvalidParamErr
+        <span class="cov8" title="1">if idx &lt; wal.firstBlockIdx || idx &gt;= wal.lastBlockIdx </span><span class="cov0" title="0">{
+                return nil, consts.NotFoundErr
         }</span>
 
         <span class="cov8" title="1">targetSegment := wal.findSegment(idx)
-
-        cacheSeg := wal.segmentCache.read(targetSegment.getStartBlockId())
-        if cacheSeg != nil </span><span class="cov0" title="0">{
+        blockId := targetSegment.getStartBlockId()
+        if cacheSeg := wal.segmentCache.read(blockId); cacheSeg != nil </span><span class="cov0" title="0">{
                 return cacheSeg.(*segment).read(idx)
         }</span>
+
         <span class="cov8" title="1">err := targetSegment.open(wal.opts.dataPerm)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov8" title="1">wal.segmentCache.write(targetSegment.getStartBlockId(), targetSegment)
+
+        <span class="cov8" title="1">wal.segmentCache.write(blockId, targetSegment)
+
         return targetSegment.read(idx)</span>
 }
 
@@ -717,34 +747,34 @@ func (wal *Log) Truncate(idx int64) error <span class="cov8" title="1">{
                 }</span>
         }
 
-        <span class="cov8" title="1">if targetSegment == wal.activeSegment </span><span class="cov0" title="0">{
+        <span class="cov8" title="1">if targetSegment == wal.activeSegment </span><span class="cov8" title="1">{
                 err := wal.activeSegment.truncate(idx)
                 if err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
 
-                <span class="cov0" title="0">err = wal.activeSegment.sync()
+                <span class="cov8" title="1">err = wal.activeSegment.sync()
                 if err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
 
-                <span class="cov0" title="0">return nil</span>
-        } else<span class="cov8" title="1"> {
+                <span class="cov8" title="1">return nil</span>
+        } else<span class="cov0" title="0"> {
                 err := targetSegment.open(wal.opts.dataPerm)
                 if err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
 
-                <span class="cov8" title="1">err = targetSegment.truncate(idx)
+                <span class="cov0" title="0">err = targetSegment.truncate(idx)
                 if err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
 
-                <span class="cov8" title="1">err = targetSegment.close()
+                <span class="cov0" title="0">err = targetSegment.close()
                 if err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
-                <span class="cov8" title="1">return nil</span>
+                <span class="cov0" title="0">return nil</span>
         }
 }
 

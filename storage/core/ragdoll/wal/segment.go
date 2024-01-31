@@ -11,6 +11,12 @@ import (
 	"path/filepath"
 )
 
+const (
+	headerLengthSize  = 8  // 记录头中length字段长度
+	headerSummarySize = 16 // 记录头中checksum字段长度
+	headerSize        = 24 // 记录头总长度
+)
+
 type bpos struct {
 	start int64
 	end   int64
@@ -32,11 +38,13 @@ type segment struct {
 	// end 表示结束偏移量
 	bpos           []*bpos
 	nextByteToSync int64 // nextByteToSync 下一个要同步的字节偏移量
+	maxSize        int64 // maxSize segment文件最大体积
 }
 
-func newSegment(path string) *segment {
+func newSegment(path string, maxSize int64) *segment {
 	seg := &segment{}
 	seg.path = path
+	seg.maxSize = maxSize
 	return seg
 }
 
@@ -92,13 +100,17 @@ func (seg *segment) close() error {
 }
 
 // write 写日志到数据文件中。
-// segment数据文件不知道自己的存储上限，由外层使用者控制
 func (seg *segment) write(data []byte) error {
 	b := buildBinary(data)
+	lb := int64(len(b))
 	lbbf := int64(len(seg.bbuf))
+	if lb+lbbf > seg.maxSize {
+		return consts.SegmentFullErr
+	}
+
 	seg.bpos = append(seg.bpos, &bpos{
 		start: lbbf,
-		end:   lbbf + int64(len(b)),
+		end:   lbbf + lb,
 	})
 
 	seg.bbuf = append(seg.bbuf, b...)
@@ -131,14 +143,10 @@ func (seg *segment) sync() error {
 	return nil
 }
 
-func (seg *segment) size() int64 {
-	return int64(len(seg.bbuf))
-}
-
 func (seg *segment) read(idx int64) ([]byte, error) {
 	for inner, pos := range seg.bpos {
 		if seg.startBlockId+int64(inner) == idx {
-			return seg.bbuf[pos.start:pos.end], nil
+			return seg.bbuf[pos.start+headerSize : pos.end], nil
 		}
 	}
 
@@ -192,11 +200,15 @@ func baseToBlockId(base string) (int64, error) {
 // |				payload x字节			|
 func buildBinary(data []byte) []byte {
 	length := int64(len(data))
-	buf := make([]byte, 24)
-	binary.PutVarint(buf[:8], length)
-	checksum := md5.Sum(append(data, buf[:8]...))
+	// prof: 避免buf重分配
+	buf := make([]byte, headerSize, headerSize+length)
+	binary.PutVarint(buf[:headerLengthSize], length)
+	var dataAndLength []byte
+	dataAndLength = append(dataAndLength, data...)
+	dataAndLength = append(dataAndLength, buf[:headerLengthSize]...)
+	checksum := md5.Sum(dataAndLength)
 	for i := 0; i < len(checksum); i++ {
-		buf[8+i] = checksum[i]
+		buf[headerLengthSize+i] = checksum[i]
 	}
 	buf = append(buf, data...)
 	return buf
@@ -205,8 +217,9 @@ func buildBinary(data []byte) []byte {
 // loadBinary 从文件装载格式化二进制数据
 func loadBinary(raw []byte) ([]*bpos, []byte, error) {
 	var start int64 = 0
-	var bps []*bpos
-	var bbf []byte
+	// prof: 粗拍一个cap，避免小数据段导致的频繁重分配问题
+	bps := make([]*bpos, 0, 512)
+	bbf := make([]byte, 0, 5*consts.KB)
 	for {
 		if int64(len(raw)) == start {
 			break
@@ -231,16 +244,17 @@ func loadBinary(raw []byte) ([]*bpos, []byte, error) {
 // parseBinary 解析单个格式化二进制数据 -> 日志数据
 func parseBinary(raw []byte) ([]byte, int64, error) {
 	// length + chechsum
-	if len(raw) < 24 {
+	if len(raw) < headerSize {
 		return nil, 0, consts.CorruptErr
 	}
 
-	length, _ := binary.Varint(raw[:8])
-	checksum := raw[8:24]
-	end := 24 + length
-	data := make([]byte, end-24)
-	copy(data, raw[24:end])
-	cc := md5.Sum(append(data, raw[:8]...))
+	length, _ := binary.Varint(raw[:headerLengthSize])
+	checksum := raw[headerLengthSize:headerSummarySize]
+	end := headerSize + length
+	var dataAndLength []byte
+	dataAndLength = append(dataAndLength, raw[headerSize:end]...)
+	dataAndLength = append(dataAndLength, raw[:headerLengthSize]...)
+	cc := md5.Sum(dataAndLength)
 	for i := 0; i < len(checksum); i++ {
 		if checksum[i] != cc[i] {
 			return nil, 0, consts.CorruptErr

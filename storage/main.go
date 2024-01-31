@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/Trinoooo/eggie_kv/kv_storage/cli"
+	"github.com/Trinoooo/eggie_kv/storage/cli"
 	"log"
 	"os"
 )

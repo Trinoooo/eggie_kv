@@ -22,13 +22,13 @@ func TestLog_Write(t *testing.T) {
 		SetDirPerm(0770).
 		SetDataPerm(0660).
 		SetSegmentCacheSize(5).
-		SetSegmentSize(uint64(segmentSize))
+		SetSegmentSize(int64(segmentSize))
 	wal, err := Open("../../../../test_data/wal/", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 200; i++ {
 		data := []byte{1, 3, 5, 2, 4, 6}
 		_, err := wal.Write(data)
 		if err != nil {
@@ -254,8 +254,7 @@ func benchmarkInner(b *testing.B, data []byte) {
 		SetDirPerm(0770).
 		SetDataPerm(0660).
 		SetSegmentCacheSize(5).
-		SetSegmentSize(uint64(segmentSize)).
-		SetNoSync()
+		SetSegmentSize(int64(segmentSize))
 	wal, err := Open("../../../../test_data/wal/", opts)
 	if err != nil {
 		b.Fatal(err)
