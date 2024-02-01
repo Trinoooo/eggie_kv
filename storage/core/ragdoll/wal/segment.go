@@ -196,8 +196,7 @@ func baseToBlockId(base string) (int64, error) {
 
 // buildBinary 日志数据 -> 格式化二进制数据
 // 存储在文件中的block结构：
-// |	length 8字节		|	checksum 16字节	|
-// |				payload x字节			|
+// | length 8字节 | checksum 16字节 | payload x字节 |
 func buildBinary(data []byte) []byte {
 	length := int64(len(data))
 	// prof: 避免buf重分配
@@ -218,8 +217,8 @@ func buildBinary(data []byte) []byte {
 func loadBinary(raw []byte) ([]*bpos, []byte, error) {
 	var start int64 = 0
 	// prof: 粗拍一个cap，避免小数据段导致的频繁重分配问题
-	bps := make([]*bpos, 0, 512)
-	bbf := make([]byte, 0, 5*consts.KB)
+	bps := make([]*bpos, 0, consts.KB)
+	bbf := make([]byte, 0, consts.MB)
 	for {
 		if int64(len(raw)) == start {
 			break

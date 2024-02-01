@@ -249,7 +249,7 @@ func BenchmarkWal_Write_1000byte(b *testing.B) {
 }
 
 func benchmarkInner(b *testing.B, data []byte) {
-	segmentSize := consts.MB
+	segmentSize := 100 * consts.MB
 	opts := NewOptions().
 		SetDirPerm(0770).
 		SetDataPerm(0660).
