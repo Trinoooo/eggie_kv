@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 	"github.com/Trinoooo/eggie_kv/consts"
-	"github.com/Trinoooo/eggie_kv/kv_storage/server"
+	"github.com/Trinoooo/eggie_kv/storage/server"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 	"net/http"

@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	mask = 0x010814
+	mask = 1e10
 )
 
 var DefaultOptions = &Options{
@@ -28,8 +28,8 @@ type Options struct {
 	// dirPerm 先行日志目录文件权限位
 	// dataPerm 先行日志数据文件权限位
 	dataPerm, dirPerm os.FileMode
-	segmentSize       uint64 // maxSegmentSize segment数据文件最大大小
-	segmentCacheSize  int    // 内存中缓存的segment内容数量
+	segmentSize       int64 // maxSegmentSize segment数据文件最大大小
+	segmentCacheSize  int   // 内存中缓存的segment内容数量
 	// noSync 当设置为true时，只有segment写满
 	// 才持久化到磁盘。可以提高写性能，但需要承担
 	// 数据丢失的风险。
@@ -50,7 +50,7 @@ func (opts *Options) SetDirPerm(dirPerm os.FileMode) *Options {
 	return opts
 }
 
-func (opts *Options) SetSegmentSize(segmentSize uint64) *Options {
+func (opts *Options) SetSegmentSize(segmentSize int64) *Options {
 	opts.segmentSize = segmentSize
 	return opts
 }
@@ -60,6 +60,7 @@ func (opts *Options) SetSegmentCacheSize(segmentCacheSize int) *Options {
 	return opts
 }
 
+// todo: 后台协程定时刷盘
 func (opts *Options) SetNoSync() *Options {
 	opts.noSync = true
 	return opts
@@ -163,7 +164,7 @@ func (wal *Log) init() error {
 			return filepath.SkipDir
 		}
 
-		wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, de.Name())))
+		wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, de.Name()), wal.opts.segmentSize))
 		firstBlockIdOfSegment, err := baseToBlockId(de.Name())
 		if err != nil {
 			return err
@@ -177,7 +178,8 @@ func (wal *Log) init() error {
 
 	// 目录下没有数据文件
 	if len(wal.segments) == 0 {
-		first := newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx)))
+		wal.firstBlockIdx = wal.lastBlockIdx
+		first := newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx)), wal.opts.segmentSize)
 		wal.segments = append(wal.segments, first)
 		wal.activeSegment = first
 	} else {
@@ -218,6 +220,10 @@ func (wal *Log) Close() (err error) {
 	return
 }
 
+// Write 写入wal日志数据
+// 当返回 WalFullErr 错误时意味着wal日志文件夹下存储内容已满
+// 外部使用者应当读取并截断早时写入的日志数据
+// 当返回 WalFullErr 错误时，wal不会关闭，因此对wal的操作是安全的
 func (wal *Log) Write(data []byte) (int64, error) {
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
@@ -228,26 +234,39 @@ func (wal *Log) Write(data []byte) (int64, error) {
 		return 0, consts.CorruptErr
 	}
 
-	// todo: 循环写日志
-	// wal.lastBlockIdx = (wal.lastBlockIdx + 1) % mask
-	wal.lastBlockIdx += 1
-	if uint64(wal.activeSegment.size())+uint64(len(buildBinary(data))) > wal.opts.segmentSize {
-		err := wal.activeSegment.close()
-		if err != nil {
-			return 0, err
-		}
-
-		wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx))))
-		wal.activeSegment = wal.segments[len(wal.segments)-1]
-		err = wal.activeSegment.open(wal.opts.dataPerm)
-		if err != nil {
-			return 0, err
-		}
+	wal.lastBlockIdx = (wal.lastBlockIdx + 1) % mask
+	// 循环写日志时可能日志文件夹下内容写满
+	// 需要考虑lastBlockIdx追上firstBlockIdx的情况
+	if wal.lastBlockIdx == wal.firstBlockIdx {
+		return 0, consts.WalFullErr
 	}
 
 	err := wal.activeSegment.write(data)
 	if err != nil {
-		return 0, err
+		// 如果当前segment满了
+		// 那么新开一个segment
+		if errors.Is(err, consts.SegmentFullErr) {
+			err := wal.activeSegment.close()
+			if err != nil {
+				return 0, err
+			}
+
+			wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx)), wal.opts.segmentSize))
+			wal.activeSegment = wal.segments[len(wal.segments)-1]
+			err = wal.activeSegment.open(wal.opts.dataPerm)
+			if err != nil {
+				return 0, err
+			}
+
+			// 如果segmentSize设置小于一次单wal日志数据最大体积
+			// 那么可能出现新建一个segment也写入失败的问题
+			err = wal.activeSegment.write(data)
+			if err != nil {
+				return 0, err
+			}
+		} else {
+			return 0, err
+		}
 	}
 
 	if !wal.opts.noSync {
@@ -270,21 +289,23 @@ func (wal *Log) Read(idx int64) ([]byte, error) {
 		return nil, consts.CorruptErr
 	}
 
-	if idx < wal.firstBlockIdx || idx > wal.lastBlockIdx {
-		return nil, consts.InvalidParamErr
+	if idx < wal.firstBlockIdx || idx >= wal.lastBlockIdx {
+		return nil, consts.NotFoundErr
 	}
 
 	targetSegment := wal.findSegment(idx)
-
-	cacheSeg := wal.segmentCache.read(targetSegment.getStartBlockId())
-	if cacheSeg != nil {
+	blockId := targetSegment.getStartBlockId()
+	if cacheSeg := wal.segmentCache.read(blockId); cacheSeg != nil {
 		return cacheSeg.(*segment).read(idx)
 	}
+
 	err := targetSegment.open(wal.opts.dataPerm)
 	if err != nil {
 		return nil, err
 	}
-	wal.segmentCache.write(targetSegment.getStartBlockId(), targetSegment)
+
+	wal.segmentCache.write(blockId, targetSegment)
+
 	return targetSegment.read(idx)
 }
 
@@ -356,5 +377,9 @@ func (wal *Log) findSegment(idx int64) *segment {
 		return wal.segments[i].getStartBlockId() >= idx
 	})
 
-	return wal.segments[target-1]
+	if target != 0 {
+		target -= 1
+	}
+
+	return wal.segments[target]
 }

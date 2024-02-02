@@ -2,8 +2,8 @@ package ragdoll
 
 import (
 	"github.com/Trinoooo/eggie_kv/consts"
-	"github.com/Trinoooo/eggie_kv/kv_storage/core/iface"
-	"github.com/Trinoooo/eggie_kv/kv_storage/core/ragdoll/wal"
+	"github.com/Trinoooo/eggie_kv/storage/core/iface"
+	"github.com/Trinoooo/eggie_kv/storage/core/ragdoll/wal"
 	"github.com/spf13/viper"
 	"sync"
 )
