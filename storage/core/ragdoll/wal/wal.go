@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 )
 
 const (
@@ -60,7 +61,6 @@ func (opts *Options) SetSegmentCacheSize(segmentCacheSize int) *Options {
 	return opts
 }
 
-// todo: 后台协程定时刷盘
 func (opts *Options) SetNoSync() *Options {
 	opts.noSync = true
 	return opts
@@ -84,7 +84,7 @@ func (opts *Options) check() error {
 
 // Log 先行日志
 type Log struct {
-	mu           sync.RWMutex
+	mu           sync.Mutex
 	opts         *Options
 	path         string     // path 先行日志的目录路径
 	segmentCache *Lru       // segmentCache 记录缓存，采用LRU缓存策略
@@ -98,8 +98,10 @@ type Log struct {
 	firstBlockIdx int64 // firstBlockIdx 第一个日志块idx
 	lastBlockIdx  int64 // lastBlockIdx 最后一个日志块idx
 
-	closed    bool // closed 是否已经关闭
-	corrupted bool // corrupted 是否已损坏
+	closed    bool       // closed 是否已经关闭
+	corrupted bool       // corrupted 是否已损坏
+	bgfailed  bool       // bgfailed 后台协程执行失败
+	notifier  chan error // notifier wal主协程与子协程的同步渠道
 }
 
 func Open(dirPath string, opts *Options) (*Log, error) {
@@ -118,6 +120,7 @@ func Open(dirPath string, opts *Options) (*Log, error) {
 		segmentCache:  newLru(opts.segmentCacheSize),
 		firstBlockIdx: math.MaxInt64,
 		lastBlockIdx:  0,
+		notifier:      make(chan error),
 	}
 
 	err = wal.init()
@@ -125,6 +128,7 @@ func Open(dirPath string, opts *Options) (*Log, error) {
 		return nil, err
 	}
 
+	wal.notifier <- nil
 	return wal, nil
 }
 
@@ -149,6 +153,7 @@ func (wal *Log) init() error {
 		return consts.InvalidParamErr
 	}
 
+	var activeSegment *segment
 	// 遍历日志目录，获取全量数据文件信息
 	if err = filepath.WalkDir(wal.path, func(path string, de fs.DirEntry, err error) error {
 		if err != nil {
@@ -164,13 +169,36 @@ func (wal *Log) init() error {
 			return filepath.SkipDir
 		}
 
-		wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, de.Name()), wal.opts.segmentSize))
-		firstBlockIdOfSegment, err := baseToBlockId(de.Name())
+		cs := newSegment(filepath.Join(wal.path, de.Name()), wal.opts.segmentSize)
+		wal.segments = append(wal.segments, cs)
+		firstBlockIdOfSegment, hasSuffix, err := baseToBlockId(de.Name())
 		if err != nil {
 			return err
 		}
 
 		wal.firstBlockIdx = int64(math.Min(float64(wal.firstBlockIdx), float64(firstBlockIdOfSegment)))
+
+		if hasSuffix {
+			// wal目录下多个segment文件存在.active后缀时
+			// 清除startBlockId小的segment文件.active后缀
+			if activeSegment == nil {
+				activeSegment = cs
+			} else {
+				if firstBlockIdOfSegment > activeSegment.getStartBlockId() {
+					err := activeSegment.rename()
+					if err != nil {
+						return err
+					}
+
+					activeSegment = cs
+				} else {
+					err := cs.rename()
+					if err != nil {
+						return err
+					}
+				}
+			}
+		}
 		return nil
 	}); err != nil {
 		return err
@@ -179,16 +207,18 @@ func (wal *Log) init() error {
 	// 目录下没有数据文件
 	if len(wal.segments) == 0 {
 		wal.firstBlockIdx = wal.lastBlockIdx
-		first := newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx)), wal.opts.segmentSize)
+		first := newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx, true)), wal.opts.segmentSize)
 		wal.segments = append(wal.segments, first)
 		wal.activeSegment = first
 	} else {
 		sort.Slice(wal.segments, func(i, j int) bool {
 			return wal.segments[i].getStartBlockId() < wal.segments[j].getStartBlockId()
 		})
-		wal.activeSegment = wal.segments[len(wal.segments)-1]
+		wal.activeSegment = activeSegment
 	}
 
+	// 打开当前活跃的segment文件
+	// 新日志顺序写入当前活跃的segment文件
 	err = wal.activeSegment.open(wal.opts.dataPerm)
 	if err != nil {
 		if errors.Is(err, consts.CorruptErr) {
@@ -197,6 +227,29 @@ func (wal *Log) init() error {
 		return err
 	}
 	wal.lastBlockIdx = wal.activeSegment.getStartBlockId() + int64(len(wal.activeSegment.bpos))
+
+	// 最终一致性场景下使用后台协程定时刷盘
+	// 刷盘周期默认1s
+	if wal.opts.noSync {
+		go func() {
+			<-wal.notifier
+			ticker := time.NewTicker(time.Second)
+			for {
+				select {
+				case <-wal.notifier:
+					return
+				case <-ticker.C:
+					err := wal.Sync()
+					if err != nil {
+						wal.mu.Lock()
+						wal.bgfailed = true
+						wal.mu.Unlock()
+						return
+					}
+				}
+			}
+		}()
+	}
 
 	return nil
 }
@@ -217,6 +270,9 @@ func (wal *Log) Close() (err error) {
 	}
 
 	wal.closed = true
+
+	// 关闭管道通知后台子协程结束
+	close(wal.notifier)
 	return
 }
 
@@ -232,6 +288,8 @@ func (wal *Log) Write(data []byte) (int64, error) {
 		return 0, consts.FileClosedErr
 	} else if wal.corrupted {
 		return 0, consts.CorruptErr
+	} else if wal.bgfailed {
+		return 0, consts.BackgroundErr
 	}
 
 	wal.lastBlockIdx = (wal.lastBlockIdx + 1) % mask
@@ -251,12 +309,22 @@ func (wal *Log) Write(data []byte) (int64, error) {
 				return 0, err
 			}
 
-			wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx)), wal.opts.segmentSize))
-			wal.activeSegment = wal.segments[len(wal.segments)-1]
-			err = wal.activeSegment.open(wal.opts.dataPerm)
+			wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx, true)), wal.opts.segmentSize))
+			err = wal.segments[len(wal.segments)-1].open(wal.opts.dataPerm)
 			if err != nil {
 				return 0, err
 			}
+
+			// 在下个segment文件创建成功后再去掉activeSegment文件名
+			// 避免出现wal目录下出现没有segment文件有.active后缀的情况
+			// 如果rename失败，wal目录下会出现多个segment文件有.active
+			// 后缀的情况，wal.init()会选择有.active后缀且startBlockId
+			// 最大的segment文件作为activeSegment
+			err = wal.activeSegment.rename()
+			if err != nil {
+				return 0, err
+			}
+			wal.activeSegment = wal.segments[len(wal.segments)-1]
 
 			// 如果segmentSize设置小于一次单wal日志数据最大体积
 			// 那么可能出现新建一个segment也写入失败的问题
@@ -280,13 +348,15 @@ func (wal *Log) Write(data []byte) (int64, error) {
 }
 
 func (wal *Log) Read(idx int64) ([]byte, error) {
-	wal.mu.RLock()
-	defer wal.mu.RUnlock()
+	wal.mu.Lock()
+	defer wal.mu.Unlock()
 
 	if wal.closed {
 		return nil, consts.FileClosedErr
 	} else if wal.corrupted {
 		return nil, consts.CorruptErr
+	} else if wal.bgfailed {
+		return nil, consts.BackgroundErr
 	}
 
 	if idx < wal.firstBlockIdx || idx >= wal.lastBlockIdx {
@@ -310,6 +380,8 @@ func (wal *Log) Read(idx int64) ([]byte, error) {
 }
 
 func (wal *Log) Sync() error {
+	wal.mu.Lock()
+	defer wal.mu.Unlock()
 	return wal.activeSegment.sync()
 }
 
@@ -321,6 +393,8 @@ func (wal *Log) Truncate(idx int64) error {
 		return consts.FileClosedErr
 	} else if wal.corrupted {
 		return consts.CorruptErr
+	} else if wal.bgfailed {
+		return consts.BackgroundErr
 	}
 
 	if idx < wal.firstBlockIdx || idx > wal.lastBlockIdx {

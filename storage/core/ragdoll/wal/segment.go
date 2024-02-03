@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -16,6 +17,8 @@ const (
 	headerSummarySize = 16 // 记录头中checksum字段长度
 	headerSize        = 24 // 记录头总长度
 )
+
+const suffix = ".active"
 
 type bpos struct {
 	start int64
@@ -26,7 +29,7 @@ type bpos struct {
 type segment struct {
 	fd           *os.File // fd segment文件描述符
 	path         string   // path segment文件路径
-	startBlockId int64    // startBlockId segment起始blockId
+	startBlockId *int64   // startBlockId segment起始blockId
 	// bbuf segment中存储的数据内容
 	// segment存储的最大容量取决于外部，存储结构如下：
 	// | block #1 | block #2 | 0000 |
@@ -39,6 +42,7 @@ type segment struct {
 	bpos           []*bpos
 	nextByteToSync int64 // nextByteToSync 下一个要同步的字节偏移量
 	maxSize        int64 // maxSize segment文件最大体积
+	hasSuffix      bool  // hasSuffix segment文件路径中是否包含.active后缀
 }
 
 func newSegment(path string, maxSize int64) *segment {
@@ -49,7 +53,11 @@ func newSegment(path string, maxSize int64) *segment {
 }
 
 func (seg *segment) getStartBlockId() int64 {
-	blockId, _ := baseToBlockId(filepath.Base(seg.path))
+	if seg.startBlockId != nil {
+		return *seg.startBlockId
+	}
+
+	blockId, _, _ := baseToBlockId(filepath.Base(seg.path))
 	return blockId
 }
 
@@ -76,10 +84,12 @@ func (seg *segment) open(perm os.FileMode) error {
 	seg.bbuf = bbf
 	seg.bpos = bps
 	seg.nextByteToSync = int64(len(seg.bbuf))
-	seg.startBlockId, err = baseToBlockId(filepath.Base(seg.path))
+	sbid, hasSuffix, err := baseToBlockId(filepath.Base(seg.path))
 	if err != nil {
 		return err
 	}
+	seg.startBlockId = &sbid
+	seg.hasSuffix = hasSuffix
 	return nil
 }
 
@@ -122,6 +132,11 @@ func (seg *segment) write(data []byte) error {
 func (seg *segment) sync() error {
 	var written int64
 	lenToWrite := int64(len(seg.bbuf)) - seg.nextByteToSync
+	// fast-through
+	if lenToWrite == 0 {
+		return nil
+	}
+
 	for {
 		if written == lenToWrite {
 			break
@@ -145,7 +160,7 @@ func (seg *segment) sync() error {
 
 func (seg *segment) read(idx int64) ([]byte, error) {
 	for inner, pos := range seg.bpos {
-		if seg.startBlockId+int64(inner) == idx {
+		if *seg.startBlockId+int64(inner) == idx {
 			return seg.bbuf[pos.start+headerSize : pos.end], nil
 		}
 	}
@@ -154,7 +169,7 @@ func (seg *segment) read(idx int64) ([]byte, error) {
 }
 
 func (seg *segment) truncate(idx int64) error {
-	posOffset := idx - seg.startBlockId
+	posOffset := idx - *seg.startBlockId
 	firstPosAfterTruncate := seg.bpos[posOffset]
 	seg.bpos = seg.bpos[posOffset:]
 	seg.bbuf = seg.bbuf[firstPosAfterTruncate.start:]
@@ -173,7 +188,7 @@ func (seg *segment) truncate(idx int64) error {
 	}
 	seg.nextByteToSync = lbuf
 	oldPath := seg.path
-	seg.path = filepath.Join(filepath.Dir(seg.path), blockIdToBase(idx))
+	seg.path = filepath.Join(filepath.Dir(seg.path), blockIdToBase(idx, seg.hasSuffix))
 	err = os.Rename(oldPath, seg.path)
 	if err != nil {
 		return err
@@ -181,17 +196,38 @@ func (seg *segment) truncate(idx int64) error {
 	return nil
 }
 
-func blockIdToBase(blockId int64) string {
-	return fmt.Sprintf("%010d", blockId)
+func (seg *segment) rename() error {
+	oldPath := seg.path
+	if seg.hasSuffix {
+		seg.path, _ = strings.CutSuffix(seg.path, suffix)
+	} else {
+		seg.path += suffix
+	}
+
+	err := os.Rename(oldPath, seg.path)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func baseToBlockId(base string) (int64, error) {
-	var firstBlockIdOfSegment int64
-	_, err := fmt.Sscanf(base, "%010d", &firstBlockIdOfSegment)
-	if err != nil {
-		return 0, err
+func blockIdToBase(blockId int64, setSuffix bool) string {
+	base := fmt.Sprintf("%010d", blockId)
+	if setSuffix {
+		base += suffix
 	}
-	return firstBlockIdOfSegment, nil
+	return base
+}
+
+func baseToBlockId(base string) (int64, bool, error) {
+	before, found := strings.CutSuffix(base, suffix)
+	var firstBlockIdOfSegment int64
+	_, err := fmt.Sscanf(before, "%010d", &firstBlockIdOfSegment)
+	if err != nil {
+		return 0, false, err
+	}
+	return firstBlockIdOfSegment, found, nil
 }
 
 // buildBinary 日志数据 -> 格式化二进制数据
