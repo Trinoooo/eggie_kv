@@ -59,7 +59,7 @@
 				
 				<option value="file1">github.com/Trinoooo/eggie_kv/storage/core/ragdoll/wal/segment.go (87.9%)</option>
 				
-				<option value="file2">github.com/Trinoooo/eggie_kv/storage/core/ragdoll/wal/wal.go (74.2%)</option>
+				<option value="file2">github.com/Trinoooo/eggie_kv/storage/core/ragdoll/wal/wal.go (75.5%)</option>
 				
 				</select>
 			</div>
@@ -480,14 +480,6 @@ const (
         mask = 1e8
 )
 
-var DefaultOptions = &amp;Options{
-        dataPerm:         0660,
-        dirPerm:          0770,
-        segmentSize:      10 * consts.MB,
-        segmentCacheSize: 3,
-        noSync:           false,
-}
-
 // Options wal日志选项
 type Options struct {
         // dirPerm 先行日志目录文件权限位
@@ -502,7 +494,13 @@ type Options struct {
 }
 
 func NewOptions() *Options <span class="cov8" title="1">{
-        return DefaultOptions
+        return &amp;Options{
+                dataPerm:         0660,
+                dirPerm:          0770,
+                segmentSize:      10 * consts.MB,
+                segmentCacheSize: 3,
+                noSync:           false,
+        }
 }</span>
 
 func (opts *Options) SetDataPerm(dataPerm os.FileMode) *Options <span class="cov8" title="1">{
@@ -570,7 +568,8 @@ type Log struct {
 
 func Open(dirPath string, opts *Options) (*Log, error) <span class="cov8" title="1">{
         if opts == nil </span><span class="cov8" title="1">{
-                opts = DefaultOptions
+                // note: 多次调用NewOptions会导致全局DefaultOptions字段值改变
+                opts = NewOptions()
         }</span>
 
         <span class="cov8" title="1">err := opts.check()
@@ -709,7 +708,7 @@ func (wal *Log) init() error <span class="cov8" title="1">{
                                 case &lt;-ticker.C:<span class="cov8" title="1">
                                         // note: ticker和notifier同时可消费时notifier更高优
                                         wal.mu.Lock()
-                                        if wal.closed </span><span class="cov8" title="1">{
+                                        if wal.closed </span><span class="cov0" title="0">{
                                                 wal.mu.Unlock()
                                                 return
                                         }</span>
@@ -810,7 +809,7 @@ func (wal *Log) Write(data []byte) (int64, error) <span class="cov8" title="1">{
                 }</span>
         }
 
-        <span class="cov8" title="1">if !wal.opts.noSync </span><span class="cov0" title="0">{
+        <span class="cov8" title="1">if !wal.opts.noSync </span><span class="cov8" title="1">{
                 err = wal.activeSegment.sync()
                 if err != nil </span><span class="cov0" title="0">{
                         return 0, err
@@ -836,7 +835,7 @@ func (wal *Log) Read(idx int64) ([]byte, error) <span class="cov8" title="1">{
 
         <span class="cov8" title="1">targetSegment := wal.findSegment(idx)
         blockId := targetSegment.getStartBlockId()
-        if cacheSeg := wal.segmentCache.read(blockId); cacheSeg != nil </span><span class="cov0" title="0">{
+        if cacheSeg := wal.segmentCache.read(blockId); cacheSeg != nil </span><span class="cov8" title="1">{
                 return cacheSeg.(*segment).read(idx)
         }</span>
 
@@ -848,7 +847,7 @@ func (wal *Log) Read(idx int64) ([]byte, error) <span class="cov8" title="1">{
         }
 
         <span class="cov8" title="1">eliminatedSegment := wal.segmentCache.write(blockId, targetSegment)
-        if eliminatedSegment != nil </span><span class="cov0" title="0">{
+        if eliminatedSegment != nil </span><span class="cov8" title="1">{
                 err := eliminatedSegment.(*segment).close()
                 if err != nil </span><span class="cov0" title="0">{
                         return nil, err

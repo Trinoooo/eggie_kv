@@ -16,14 +16,6 @@ const (
 	mask = 1e8
 )
 
-var DefaultOptions = &Options{
-	dataPerm:         0660,
-	dirPerm:          0770,
-	segmentSize:      10 * consts.MB,
-	segmentCacheSize: 3,
-	noSync:           false,
-}
-
 // Options wal日志选项
 type Options struct {
 	// dirPerm 先行日志目录文件权限位
@@ -38,7 +30,13 @@ type Options struct {
 }
 
 func NewOptions() *Options {
-	return DefaultOptions
+	return &Options{
+		dataPerm:         0660,
+		dirPerm:          0770,
+		segmentSize:      10 * consts.MB,
+		segmentCacheSize: 3,
+		noSync:           false,
+	}
 }
 
 func (opts *Options) SetDataPerm(dataPerm os.FileMode) *Options {
@@ -106,7 +104,8 @@ type Log struct {
 
 func Open(dirPath string, opts *Options) (*Log, error) {
 	if opts == nil {
-		opts = DefaultOptions
+		// note: 多次调用NewOptions会导致全局DefaultOptions字段值改变
+		opts = NewOptions()
 	}
 
 	err := opts.check()
@@ -427,6 +426,9 @@ func (wal *Log) Truncate(idx int64) error {
 		c1 := wal.firstBlockIdx <= wal.lastBlockIdx && (firstSegment.getStartBlockId() <= seg.getStartBlockId() && seg.getStartBlockId() <= targetSegment.getStartBlockId())
 		c2 := wal.firstBlockIdx > wal.lastBlockIdx && (seg.getStartBlockId() <= targetSegment.getStartBlockId() && firstSegment.getStartBlockId() >= seg.getStartBlockId())
 		if c1 || c2 {
+			// note：清除缓存，否则原缓存key会因截断后startBlockId修改而导致不可访问/浪费内存
+			wal.segmentCache.remove(seg.getStartBlockId())
+
 			if seg == wal.activeSegment {
 				_, err = wal.activeSegment.truncate(idx)
 				if err != nil {

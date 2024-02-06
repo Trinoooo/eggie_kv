@@ -36,7 +36,7 @@ func TestLog_Write(t *testing.T) {
 		}
 	}()
 
-	for i := 0; i < 1e7; i++ {
+	for i := 0; i < 3e7; i++ {
 		_, err := wal.Write(testList[3])
 		if err != nil {
 			t.Fatal(err)
@@ -56,9 +56,12 @@ func TestLog_Read(t *testing.T) {
 
 	readIdxList := []int64{
 		3000000,
-		4000000,
-		5000000,
+		3000000,
+		6000000,
 		7000000,
+		9000000,
+		12000000,
+		29400000,
 	}
 
 	for _, idx := range readIdxList {
@@ -128,7 +131,7 @@ func TestLog_TruncateAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = wal.Truncate(9600000)
+	err = wal.Truncate(29400000)
 	if err != nil {
 		t.Fatal(err)
 	}
