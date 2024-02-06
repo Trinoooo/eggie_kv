@@ -13,9 +13,17 @@ import (
 )
 
 const (
-	headerLengthSize  = 8  // 记录头中length字段长度
-	headerSummarySize = 16 // 记录头中checksum字段长度
-	headerSize        = 24 // 记录头总长度
+	// 字段长度，单位字节
+	headerLengthSize  = 8
+	headerBlockIdSize = 8
+	headerSummarySize = 16
+	headerSize        = 32
+
+	// 字段偏移量，单位字节
+	headerLengthOffset  = 0
+	headerBlockIdOffset = 8
+	headerSummaryOffset = 16
+	headerDataOffset    = 32
 )
 
 const suffix = ".active"
@@ -43,6 +51,7 @@ type segment struct {
 	nextByteToSync int64 // nextByteToSync 下一个要同步的字节偏移量
 	maxSize        int64 // maxSize segment文件最大体积
 	hasSuffix      bool  // hasSuffix segment文件路径中是否包含.active后缀
+	nextBlockId    int64 // nextBlockId 下一个写入block的idx，口径是segment内的相对偏移量
 }
 
 func newSegment(path string, maxSize int64) *segment {
@@ -76,7 +85,7 @@ func (seg *segment) open(perm os.FileMode) error {
 		return err
 	}
 
-	bps, bbf, err := loadBinary(all)
+	bps, bbf, lastBlockId, err := loadBinary(all)
 	if err != nil {
 		return err
 	}
@@ -84,6 +93,7 @@ func (seg *segment) open(perm os.FileMode) error {
 	seg.bbuf = bbf
 	seg.bpos = bps
 	seg.nextByteToSync = int64(len(seg.bbuf))
+	seg.nextBlockId = lastBlockId + 1
 	sbid, hasSuffix, err := baseToBlockId(filepath.Base(seg.path))
 	if err != nil {
 		return err
@@ -111,7 +121,7 @@ func (seg *segment) close() error {
 
 // write 写日志到数据文件中。
 func (seg *segment) write(data []byte) error {
-	b := buildBinary(data)
+	b := buildBinary(seg.nextBlockId, data)
 	lb := int64(len(b))
 	lbbf := int64(len(seg.bbuf))
 	if lb+lbbf > seg.maxSize {
@@ -122,7 +132,7 @@ func (seg *segment) write(data []byte) error {
 		start: lbbf,
 		end:   lbbf + lb,
 	})
-
+	seg.nextBlockId++
 	seg.bbuf = append(seg.bbuf, b...)
 	return nil
 }
@@ -168,32 +178,41 @@ func (seg *segment) read(idx int64) ([]byte, error) {
 	return nil, consts.NotFoundErr
 }
 
-func (seg *segment) truncate(idx int64) error {
+func (seg *segment) truncate(idx int64) (int64, error) {
+	// note：外部使用时可能会传超过当前segment容量的idx
+	if idx > seg.nextBlockId+seg.getStartBlockId()-1 {
+		seg.bbuf = nil
+		seg.bpos = nil
+		seg.nextByteToSync = 0
+		err := os.Remove(seg.path)
+		if err != nil {
+			return 0, err
+		}
+
+		return 0, nil
+	}
+
 	posOffset := idx - *seg.startBlockId
+	*seg.startBlockId = idx
 	firstPosAfterTruncate := seg.bpos[posOffset]
 	seg.bpos = seg.bpos[posOffset:]
 	seg.bbuf = seg.bbuf[firstPosAfterTruncate.start:]
-	// fd.Truncate 内部调用Ftruncate
-	// 是相对当前文件offset改变文件大小
-	_, err := seg.fd.Seek(firstPosAfterTruncate.start, 0)
-	if err != nil {
-		return err
-	}
 
+	// fd.Truncate 内部调用Ftruncate
 	// 保留截断后的文件大小
 	lbuf := int64(len(seg.bbuf))
-	err = seg.fd.Truncate(lbuf)
+	err := seg.fd.Truncate(0)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	seg.nextByteToSync = lbuf
+	seg.nextByteToSync = 0
 	oldPath := seg.path
 	seg.path = filepath.Join(filepath.Dir(seg.path), blockIdToBase(idx, seg.hasSuffix))
 	err = os.Rename(oldPath, seg.path)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return nil
+	return lbuf, nil
 }
 
 func (seg *segment) rename() error {
@@ -213,7 +232,7 @@ func (seg *segment) rename() error {
 }
 
 func blockIdToBase(blockId int64, setSuffix bool) string {
-	base := fmt.Sprintf("%010d", blockId)
+	base := fmt.Sprintf("%08d", blockId)
 	if setSuffix {
 		base += suffix
 	}
@@ -223,7 +242,7 @@ func blockIdToBase(blockId int64, setSuffix bool) string {
 func baseToBlockId(base string) (int64, bool, error) {
 	before, found := strings.CutSuffix(base, suffix)
 	var firstBlockIdOfSegment int64
-	_, err := fmt.Sscanf(before, "%010d", &firstBlockIdOfSegment)
+	_, err := fmt.Sscanf(before, "%08d", &firstBlockIdOfSegment)
 	if err != nil {
 		return 0, false, err
 	}
@@ -232,37 +251,39 @@ func baseToBlockId(base string) (int64, bool, error) {
 
 // buildBinary 日志数据 -> 格式化二进制数据
 // 存储在文件中的block结构：
-// | length 8字节 | checksum 16字节 | payload x字节 |
-func buildBinary(data []byte) []byte {
+// | length 8字节 | length 8字节 | checksum 16字节 | payload x字节 |
+func buildBinary(blockId int64, data []byte) []byte {
 	length := int64(len(data))
 	// prof: 避免buf重分配
 	buf := make([]byte, headerSize, headerSize+length)
-	binary.PutVarint(buf[:headerLengthSize], length)
-	var dataAndLength []byte
-	dataAndLength = append(dataAndLength, data...)
-	dataAndLength = append(dataAndLength, buf[:headerLengthSize]...)
-	checksum := md5.Sum(dataAndLength)
+	binary.PutVarint(buf[:headerBlockIdOffset], length)
+	binary.PutVarint(buf[headerBlockIdOffset:headerSummaryOffset], blockId)
+	var dataAndHeader []byte
+	dataAndHeader = append(dataAndHeader, data...)
+	dataAndHeader = append(dataAndHeader, buf[:headerSummaryOffset]...)
+	checksum := md5.Sum(dataAndHeader)
 	for i := 0; i < len(checksum); i++ {
-		buf[headerLengthSize+i] = checksum[i]
+		buf[headerSummaryOffset+i] = checksum[i]
 	}
 	buf = append(buf, data...)
 	return buf
 }
 
 // loadBinary 从文件装载格式化二进制数据
-func loadBinary(raw []byte) ([]*bpos, []byte, error) {
+func loadBinary(raw []byte) ([]*bpos, []byte, int64, error) {
 	var start int64 = 0
 	// prof: 粗拍一个cap，避免小数据段导致的频繁重分配问题
 	bps := make([]*bpos, 0, consts.KB)
 	bbf := make([]byte, 0, consts.MB)
+	var lastBlockId int64
 	for {
 		if int64(len(raw)) == start {
 			break
 		}
 
-		block, offset, err := parseBinary(raw[start:])
+		block, offset, blockId, err := parseBinary(raw[start:])
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, 0, err
 		}
 
 		bps = append(bps, &bpos{
@@ -271,29 +292,30 @@ func loadBinary(raw []byte) ([]*bpos, []byte, error) {
 		})
 		start += offset
 		bbf = append(bbf, block...)
+		lastBlockId = blockId
 	}
 
-	return bps, bbf, nil
+	return bps, bbf, lastBlockId, nil
 }
 
 // parseBinary 解析单个格式化二进制数据 -> 日志数据
-func parseBinary(raw []byte) ([]byte, int64, error) {
+func parseBinary(raw []byte) ([]byte, int64, int64, error) {
 	// length + chechsum
 	if len(raw) < headerSize {
-		return nil, 0, consts.CorruptErr
+		return nil, 0, 0, consts.CorruptErr
 	}
-
-	length, _ := binary.Varint(raw[:headerLengthSize])
-	checksum := raw[headerLengthSize:headerSummarySize]
-	end := headerSize + length
+	length, _ := binary.Varint(raw[:headerBlockIdOffset])
+	blockId, _ := binary.Varint(raw[headerBlockIdOffset:headerSummaryOffset])
+	checksum := raw[headerSummaryOffset:headerDataOffset]
+	end := headerDataOffset + length
 	var dataAndLength []byte
-	dataAndLength = append(dataAndLength, raw[headerSize:end]...)
-	dataAndLength = append(dataAndLength, raw[:headerLengthSize]...)
-	cc := md5.Sum(dataAndLength)
+	dataAndLength = append(dataAndLength, raw[headerDataOffset:end]...)
+	dataAndLength = append(dataAndLength, raw[:headerSummaryOffset]...)
+	current := md5.Sum(dataAndLength)
 	for i := 0; i < len(checksum); i++ {
-		if checksum[i] != cc[i] {
-			return nil, 0, consts.CorruptErr
+		if checksum[i] != current[i] {
+			return nil, 0, 0, consts.CorruptErr
 		}
 	}
-	return raw[:end], end, nil
+	return raw[:end], end, blockId, nil
 }

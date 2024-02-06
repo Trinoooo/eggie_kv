@@ -17,28 +17,31 @@ func TestMain(m *testing.M) {
 // * 测试写入与从文件中恢复（日志文件夹下存在数据文件）
 // * opt采用自定义
 func TestLog_Write(t *testing.T) {
-	segmentSize := consts.GB
+	segmentSize := 100 * consts.MB
 	opts := NewOptions().
 		SetDirPerm(0770).
 		SetDataPerm(0660).
 		SetSegmentCacheSize(5).
-		SetSegmentSize(int64(segmentSize))
+		SetSegmentSize(int64(segmentSize)).
+		SetNoSync()
 	wal, err := Open("../../../../test_data/wal/", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for i := 0; i < 200; i++ {
-		data := []byte{1, 3, 5, 2, 4, 6}
-		_, err := wal.Write(data)
+	defer func() {
+		err = wal.Close()
+		if err != nil {
+			t.Error(err)
+		}
+	}()
+
+	for i := 0; i < 1e7; i++ {
+		_, err := wal.Write(testList[3])
 		if err != nil {
 			t.Fatal(err)
+			return
 		}
-	}
-
-	err = wal.Close()
-	if err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -51,9 +54,20 @@ func TestLog_Read(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = wal.Read(100)
-	if err != nil {
-		t.Fatal(err)
+	readIdxList := []int64{
+		3000000,
+		4000000,
+		5000000,
+		7000000,
+	}
+
+	for _, idx := range readIdxList {
+		data, err := wal.Read(idx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		t.Log(data)
 	}
 
 	err = wal.Close()
@@ -65,9 +79,9 @@ func TestLog_Read(t *testing.T) {
 // TestLog_Sync
 // * opt设置不主动刷盘，日志持久化的时机只有单数据文件满以及主动调用wal.Sync
 func TestLog_Sync(t *testing.T) {
+	segmentSize := 100 * consts.MB
 	opts := NewOptions().
-		SetSegmentSize(consts.GB).
-		SetNoSync()
+		SetSegmentSize(int64(segmentSize))
 	wal, err := Open("../../../../test_data/wal/", opts)
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +111,24 @@ func TestLog_Truncate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = wal.Truncate(40)
+	err = wal.Truncate(3000000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = wal.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLog_TruncateAgain(t *testing.T) {
+	wal, err := Open("../../../../test_data/wal/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = wal.Truncate(9600000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,6 +290,7 @@ func benchmarkInner(b *testing.B, data []byte) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	defer wal.Close()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -266,10 +298,5 @@ func benchmarkInner(b *testing.B, data []byte) {
 		if err != nil {
 			b.Fatal(err)
 		}
-	}
-
-	err = wal.Close()
-	if err != nil {
-		b.Fatal(err)
 	}
 }

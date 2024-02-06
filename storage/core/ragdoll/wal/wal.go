@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	mask = 1e10
+	mask = 1e8
 )
 
 var DefaultOptions = &Options{
@@ -128,7 +128,9 @@ func Open(dirPath string, opts *Options) (*Log, error) {
 		return nil, err
 	}
 
-	wal.notifier <- nil
+	if wal.opts.noSync {
+		wal.notifier <- nil
+	}
 	return wal, nil
 }
 
@@ -169,33 +171,28 @@ func (wal *Log) init() error {
 			return filepath.SkipDir
 		}
 
-		cs := newSegment(filepath.Join(wal.path, de.Name()), wal.opts.segmentSize)
-		wal.segments = append(wal.segments, cs)
+		currentSegment := newSegment(filepath.Join(wal.path, de.Name()), wal.opts.segmentSize)
+		wal.segments = append(wal.segments, currentSegment)
 		firstBlockIdOfSegment, hasSuffix, err := baseToBlockId(de.Name())
 		if err != nil {
 			return err
 		}
 
-		wal.firstBlockIdx = int64(math.Min(float64(wal.firstBlockIdx), float64(firstBlockIdOfSegment)))
-
 		if hasSuffix {
 			// wal目录下多个segment文件存在.active后缀时
 			// 清除startBlockId小的segment文件.active后缀
 			if activeSegment == nil {
-				activeSegment = cs
+				activeSegment = currentSegment
 			} else {
+				segmentToRename := currentSegment
 				if firstBlockIdOfSegment > activeSegment.getStartBlockId() {
-					err := activeSegment.rename()
-					if err != nil {
-						return err
-					}
+					segmentToRename = activeSegment
+					activeSegment = currentSegment
+				}
 
-					activeSegment = cs
-				} else {
-					err := cs.rename()
-					if err != nil {
-						return err
-					}
+				err := segmentToRename.rename()
+				if err != nil {
+					return err
 				}
 			}
 		}
@@ -204,29 +201,36 @@ func (wal *Log) init() error {
 		return err
 	}
 
-	// 目录下没有数据文件
-	if len(wal.segments) == 0 {
-		wal.firstBlockIdx = wal.lastBlockIdx
-		first := newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx, true)), wal.opts.segmentSize)
-		wal.segments = append(wal.segments, first)
-		wal.activeSegment = first
-	} else {
-		sort.Slice(wal.segments, func(i, j int) bool {
-			return wal.segments[i].getStartBlockId() < wal.segments[j].getStartBlockId()
-		})
-		wal.activeSegment = activeSegment
+	if activeSegment == nil {
+		activeSegment = newSegment(filepath.Join(wal.path, blockIdToBase(0, true)), wal.opts.segmentSize)
 	}
 
-	// 打开当前活跃的segment文件
-	// 新日志顺序写入当前活跃的segment文件
-	err = wal.activeSegment.open(wal.opts.dataPerm)
+	err = activeSegment.open(wal.opts.dataPerm)
 	if err != nil {
 		if errors.Is(err, consts.CorruptErr) {
 			wal.corrupted = true
 		}
 		return err
 	}
-	wal.lastBlockIdx = wal.activeSegment.getStartBlockId() + int64(len(wal.activeSegment.bpos))
+
+	// 目录下没有数据文件
+	if len(wal.segments) == 0 {
+		wal.firstBlockIdx = wal.lastBlockIdx
+		wal.segments = append(wal.segments, activeSegment)
+		wal.activeSegment = activeSegment
+		wal.lastBlockIdx = wal.activeSegment.getStartBlockId()
+	} else {
+		wal.sortSegments()
+		wal.activeSegment = activeSegment
+		for idx, seg := range wal.segments {
+			if seg == wal.activeSegment {
+				firstSegmentIdx := (idx + 1) % len(wal.segments)
+				wal.firstBlockIdx = wal.segments[firstSegmentIdx].getStartBlockId()
+			}
+		}
+		// note: 必须在打开文件后才能读取到bpos的长度
+		wal.lastBlockIdx = wal.activeSegment.getStartBlockId() + int64(len(wal.activeSegment.bpos)) - 1
+	}
 
 	// 最终一致性场景下使用后台协程定时刷盘
 	// 刷盘周期默认1s
@@ -239,6 +243,14 @@ func (wal *Log) init() error {
 				case <-wal.notifier:
 					return
 				case <-ticker.C:
+					// note: ticker和notifier同时可消费时notifier更高优
+					wal.mu.Lock()
+					if wal.closed {
+						wal.mu.Unlock()
+						return
+					}
+					wal.mu.Unlock()
+
 					err := wal.Sync()
 					if err != nil {
 						wal.mu.Lock()
@@ -254,26 +266,24 @@ func (wal *Log) init() error {
 	return nil
 }
 
-func (wal *Log) Close() (err error) {
+func (wal *Log) Close() error {
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
 
 	if wal.closed {
-		err = consts.FileClosedErr
-		return
+		return consts.FileClosedErr
 	}
 
-	e := wal.activeSegment.close()
-	if e != nil {
-		err = e
-		return
+	err := wal.activeSegment.close()
+	if err != nil {
+		return err
 	}
 
 	wal.closed = true
 
 	// 关闭管道通知后台子协程结束
 	close(wal.notifier)
-	return
+	return nil
 }
 
 // Write 写入wal日志数据
@@ -284,22 +294,20 @@ func (wal *Log) Write(data []byte) (int64, error) {
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
 
-	if wal.closed {
-		return 0, consts.FileClosedErr
-	} else if wal.corrupted {
-		return 0, consts.CorruptErr
-	} else if wal.bgfailed {
-		return 0, consts.BackgroundErr
+	err := wal.stateCheck()
+	if err != nil {
+		return 0, err
 	}
 
-	wal.lastBlockIdx = (wal.lastBlockIdx + 1) % mask
 	// 循环写日志时可能日志文件夹下内容写满
 	// 需要考虑lastBlockIdx追上firstBlockIdx的情况
-	if wal.lastBlockIdx == wal.firstBlockIdx {
+	nextLastBlockIdx := (wal.lastBlockIdx + 1) % mask
+	if nextLastBlockIdx == wal.firstBlockIdx {
 		return 0, consts.WalFullErr
 	}
+	wal.lastBlockIdx = nextLastBlockIdx
 
-	err := wal.activeSegment.write(data)
+	err = wal.activeSegment.write(data)
 	if err != nil {
 		// 如果当前segment满了
 		// 那么新开一个segment
@@ -309,8 +317,9 @@ func (wal *Log) Write(data []byte) (int64, error) {
 				return 0, err
 			}
 
-			wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx, true)), wal.opts.segmentSize))
-			err = wal.segments[len(wal.segments)-1].open(wal.opts.dataPerm)
+			nextActiveSegment := newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx, true)), wal.opts.segmentSize)
+			wal.segments = append(wal.segments, nextActiveSegment)
+			err = nextActiveSegment.open(wal.opts.dataPerm)
 			if err != nil {
 				return 0, err
 			}
@@ -324,7 +333,7 @@ func (wal *Log) Write(data []byte) (int64, error) {
 			if err != nil {
 				return 0, err
 			}
-			wal.activeSegment = wal.segments[len(wal.segments)-1]
+			wal.activeSegment = nextActiveSegment
 
 			// 如果segmentSize设置小于一次单wal日志数据最大体积
 			// 那么可能出现新建一个segment也写入失败的问题
@@ -351,16 +360,14 @@ func (wal *Log) Read(idx int64) ([]byte, error) {
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
 
-	if wal.closed {
-		return nil, consts.FileClosedErr
-	} else if wal.corrupted {
-		return nil, consts.CorruptErr
-	} else if wal.bgfailed {
-		return nil, consts.BackgroundErr
+	err := wal.stateCheck()
+	if err != nil {
+		return nil, err
 	}
 
-	if idx < wal.firstBlockIdx || idx >= wal.lastBlockIdx {
-		return nil, consts.NotFoundErr
+	err = wal.checkRange(idx)
+	if err != nil {
+		return nil, err
 	}
 
 	targetSegment := wal.findSegment(idx)
@@ -369,12 +376,20 @@ func (wal *Log) Read(idx int64) ([]byte, error) {
 		return cacheSeg.(*segment).read(idx)
 	}
 
-	err := targetSegment.open(wal.opts.dataPerm)
-	if err != nil {
-		return nil, err
+	if targetSegment != wal.activeSegment {
+		err = targetSegment.open(wal.opts.dataPerm)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	wal.segmentCache.write(blockId, targetSegment)
+	eliminatedSegment := wal.segmentCache.write(blockId, targetSegment)
+	if eliminatedSegment != nil {
+		err := eliminatedSegment.(*segment).close()
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return targetSegment.read(idx)
 }
@@ -382,6 +397,12 @@ func (wal *Log) Read(idx int64) ([]byte, error) {
 func (wal *Log) Sync() error {
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
+
+	err := wal.stateCheck()
+	if err != nil {
+		return err
+	}
+
 	return wal.activeSegment.sync()
 }
 
@@ -389,64 +410,64 @@ func (wal *Log) Truncate(idx int64) error {
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
 
-	if wal.closed {
-		return consts.FileClosedErr
-	} else if wal.corrupted {
-		return consts.CorruptErr
-	} else if wal.bgfailed {
-		return consts.BackgroundErr
+	err := wal.stateCheck()
+	if err != nil {
+		return err
 	}
 
-	if idx < wal.firstBlockIdx || idx > wal.lastBlockIdx {
-		return consts.InvalidParamErr
+	err = wal.checkRange(idx)
+	if err != nil {
+		return err
 	}
 
 	targetSegment := wal.findSegment(idx)
-	for i, seg := range wal.segments {
-		if seg == targetSegment {
-			wal.segments = wal.segments[i:]
-			break
-		}
+	firstSegment := wal.findSegment(wal.firstBlockIdx)
+	for _, seg := range wal.segments {
+		// note: c1 和 c2 对应 firstBlockIdx 与 lastBlockIdx 之间的两种情况。见 checkRange
+		c1 := wal.firstBlockIdx <= wal.lastBlockIdx && (firstSegment.getStartBlockId() <= seg.getStartBlockId() && seg.getStartBlockId() <= targetSegment.getStartBlockId())
+		c2 := wal.firstBlockIdx > wal.lastBlockIdx && (seg.getStartBlockId() <= targetSegment.getStartBlockId() && firstSegment.getStartBlockId() >= seg.getStartBlockId())
+		if c1 || c2 {
+			if seg == wal.activeSegment {
+				_, err = wal.activeSegment.truncate(idx)
+				if err != nil {
+					return err
+				}
 
-		// idx之前的文件删除
-		err := os.Remove(seg.path)
-		if err != nil {
-			return err
+				err = wal.activeSegment.sync()
+				if err != nil {
+					return err
+				}
+
+				wal.firstBlockIdx = wal.activeSegment.getStartBlockId()
+			} else {
+				err = seg.open(wal.opts.dataPerm)
+				if err != nil {
+					return err
+				}
+
+				remain, err := seg.truncate(idx)
+				if err != nil {
+					return err
+				}
+
+				err = seg.close()
+				if err != nil {
+					return err
+				}
+
+				if remain != 0 {
+					wal.firstBlockIdx = seg.getStartBlockId()
+				}
+			}
 		}
 	}
 
-	if targetSegment == wal.activeSegment {
-		err := wal.activeSegment.truncate(idx)
-		if err != nil {
-			return err
-		}
-
-		err = wal.activeSegment.sync()
-		if err != nil {
-			return err
-		}
-
-		return nil
-	} else {
-		err := targetSegment.open(wal.opts.dataPerm)
-		if err != nil {
-			return err
-		}
-
-		err = targetSegment.truncate(idx)
-		if err != nil {
-			return err
-		}
-
-		err = targetSegment.close()
-		if err != nil {
-			return err
-		}
-		return nil
-	}
+	return nil
 }
 
 func (wal *Log) findSegment(idx int64) *segment {
+	// note: 众所周知，二分搜索要求序列有序
+	wal.sortSegments()
 	target := sort.Search(len(wal.segments), func(i int) bool {
 		return wal.segments[i].getStartBlockId() >= idx
 	})
@@ -456,4 +477,37 @@ func (wal *Log) findSegment(idx int64) *segment {
 	}
 
 	return wal.segments[target]
+}
+
+func (wal *Log) stateCheck() error {
+	if wal.closed {
+		return consts.FileClosedErr
+	} else if wal.corrupted {
+		return consts.CorruptErr
+	} else if wal.bgfailed {
+		return consts.BackgroundErr
+	}
+	return nil
+}
+
+func (wal *Log) sortSegments() {
+	sort.Slice(wal.segments, func(i, j int) bool {
+		return wal.segments[i].getStartBlockId() < wal.segments[j].getStartBlockId()
+	})
+}
+
+func (wal *Log) checkRange(idx int64) error {
+	// 正常情况，lastBlockIdx 比 firstBlockIdx 大
+	// 认为idx比 firstBlockIdx 小或者idx比 lastBlockIdx 时参数非法
+	if wal.firstBlockIdx <= wal.lastBlockIdx && (idx < wal.firstBlockIdx || idx > wal.lastBlockIdx) {
+		return consts.InvalidParamErr
+	}
+
+	// 当日志开始循环，可能出现 lastBlockIdx 比 firstBlockIdx 小的情况
+	// 此时认为idx在 lastBlockIdx 与 firstBlockIdx 之间为非法情况
+	if wal.firstBlockIdx > wal.lastBlockIdx && (wal.lastBlockIdx < idx && idx < wal.firstBlockIdx) {
+		return consts.InvalidParamErr
+	}
+
+	return nil
 }

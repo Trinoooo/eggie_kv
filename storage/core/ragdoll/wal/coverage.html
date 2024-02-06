@@ -55,11 +55,11 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/Trinoooo/eggie_kv/kv_storage/core/ragdoll/wal/lru.go (100.0%)</option>
+				<option value="file0">github.com/Trinoooo/eggie_kv/storage/core/ragdoll/wal/lru.go (100.0%)</option>
 				
-				<option value="file1">github.com/Trinoooo/eggie_kv/kv_storage/core/ragdoll/wal/segment.go (85.0%)</option>
+				<option value="file1">github.com/Trinoooo/eggie_kv/storage/core/ragdoll/wal/segment.go (87.9%)</option>
 				
-				<option value="file2">github.com/Trinoooo/eggie_kv/kv_storage/core/ragdoll/wal/wal.go (63.0%)</option>
+				<option value="file2">github.com/Trinoooo/eggie_kv/storage/core/ragdoll/wal/wal.go (74.2%)</option>
 				
 				</select>
 			</div>
@@ -112,7 +112,7 @@ func (lru *Lru) read(key interface{}) interface{} <span class="cov8" title="1">{
         return elem.Value.(*item).v</span>
 }
 
-func (lru *Lru) write(key, data interface{}) <span class="cov8" title="1">{
+func (lru *Lru) write(key, data interface{}) interface{} <span class="cov8" title="1">{
         lru.mu.Lock()
         defer lru.mu.Unlock()
 
@@ -123,7 +123,7 @@ func (lru *Lru) write(key, data interface{}) <span class="cov8" title="1">{
                         k: key,
                         v: data,
                 }
-                return
+                return nil
         }</span>
 
         <span class="cov8" title="1">lru.m[key] = lru.list.PushFront(&amp;item{
@@ -131,8 +131,11 @@ func (lru *Lru) write(key, data interface{}) <span class="cov8" title="1">{
                 v: data,
         })
         if lru.list.Len() &gt; lru.size </span><span class="cov8" title="1">{
-                delete(lru.m, lru.list.Remove(lru.list.Back()).(*item).k)
+                item := lru.list.Remove(lru.list.Back()).(*item)
+                delete(lru.m, item.k)
+                return item.v
         }</span>
+        <span class="cov8" title="1">return nil</span>
 }
 </pre>
 		
@@ -147,13 +150,24 @@ import (
         "io"
         "os"
         "path/filepath"
+        "strings"
 )
 
 const (
-        headerLengthSize  = 8  // 记录头中length字段长度
-        headerSummarySize = 16 // 记录头中checksum字段长度
-        headerSize        = 24 // 记录头总长度
+        // 字段长度，单位字节
+        headerLengthSize  = 8
+        headerBlockIdSize = 8
+        headerSummarySize = 16
+        headerSize        = 32
+
+        // 字段偏移量，单位字节
+        headerLengthOffset  = 0
+        headerBlockIdOffset = 8
+        headerSummaryOffset = 16
+        headerDataOffset    = 32
 )
+
+const suffix = ".active"
 
 type bpos struct {
         start int64
@@ -164,7 +178,7 @@ type bpos struct {
 type segment struct {
         fd           *os.File // fd segment文件描述符
         path         string   // path segment文件路径
-        startBlockId int64    // startBlockId segment起始blockId
+        startBlockId *int64   // startBlockId segment起始blockId
         // bbuf segment中存储的数据内容
         // segment存储的最大容量取决于外部，存储结构如下：
         // | block #1 | block #2 | 0000 |
@@ -177,6 +191,8 @@ type segment struct {
         bpos           []*bpos
         nextByteToSync int64 // nextByteToSync 下一个要同步的字节偏移量
         maxSize        int64 // maxSize segment文件最大体积
+        hasSuffix      bool  // hasSuffix segment文件路径中是否包含.active后缀
+        nextBlockId    int64 // nextBlockId 下一个写入block的idx，口径是segment内的相对偏移量
 }
 
 func newSegment(path string, maxSize int64) *segment <span class="cov8" title="1">{
@@ -187,9 +203,13 @@ func newSegment(path string, maxSize int64) *segment <span class="cov8" title="1
 }</span>
 
 func (seg *segment) getStartBlockId() int64 <span class="cov8" title="1">{
-        blockId, _ := baseToBlockId(filepath.Base(seg.path))
-        return blockId
-}</span>
+        if seg.startBlockId != nil </span><span class="cov8" title="1">{
+                return *seg.startBlockId
+        }</span>
+
+        <span class="cov8" title="1">blockId, _, _ := baseToBlockId(filepath.Base(seg.path))
+        return blockId</span>
+}
 
 func (seg *segment) open(perm os.FileMode) error <span class="cov8" title="1">{
         // 如果是新segment文件，则创建一个新文件
@@ -206,7 +226,7 @@ func (seg *segment) open(perm os.FileMode) error <span class="cov8" title="1">{
                 return err
         }</span>
 
-        <span class="cov8" title="1">bps, bbf, err := loadBinary(all)
+        <span class="cov8" title="1">bps, bbf, lastBlockId, err := loadBinary(all)
         if err != nil </span><span class="cov0" title="0">{
                 return err
         }</span>
@@ -214,11 +234,14 @@ func (seg *segment) open(perm os.FileMode) error <span class="cov8" title="1">{
         <span class="cov8" title="1">seg.bbuf = bbf
         seg.bpos = bps
         seg.nextByteToSync = int64(len(seg.bbuf))
-        seg.startBlockId, err = baseToBlockId(filepath.Base(seg.path))
+        seg.nextBlockId = lastBlockId + 1
+        sbid, hasSuffix, err := baseToBlockId(filepath.Base(seg.path))
         if err != nil </span><span class="cov0" title="0">{
                 return err
         }</span>
-        <span class="cov8" title="1">return nil</span>
+        <span class="cov8" title="1">seg.startBlockId = &amp;sbid
+        seg.hasSuffix = hasSuffix
+        return nil</span>
 }
 
 func (seg *segment) close() error <span class="cov8" title="1">{
@@ -239,10 +262,10 @@ func (seg *segment) close() error <span class="cov8" title="1">{
 
 // write 写日志到数据文件中。
 func (seg *segment) write(data []byte) error <span class="cov8" title="1">{
-        b := buildBinary(data)
+        b := buildBinary(seg.nextBlockId, data)
         lb := int64(len(b))
         lbbf := int64(len(seg.bbuf))
-        if lb+lbbf &gt; seg.maxSize </span><span class="cov0" title="0">{
+        if lb+lbbf &gt; seg.maxSize </span><span class="cov8" title="1">{
                 return consts.SegmentFullErr
         }</span>
 
@@ -250,7 +273,7 @@ func (seg *segment) write(data []byte) error <span class="cov8" title="1">{
                 start: lbbf,
                 end:   lbbf + lb,
         })
-
+        seg.nextBlockId++
         seg.bbuf = append(seg.bbuf, b...)
         return nil</span>
 }
@@ -260,7 +283,12 @@ func (seg *segment) write(data []byte) error <span class="cov8" title="1">{
 func (seg *segment) sync() error <span class="cov8" title="1">{
         var written int64
         lenToWrite := int64(len(seg.bbuf)) - seg.nextByteToSync
-        for </span><span class="cov8" title="1">{
+        // fast-through
+        if lenToWrite == 0 </span><span class="cov8" title="1">{
+                return nil
+        }</span>
+
+        <span class="cov8" title="1">for </span><span class="cov8" title="1">{
                 if written == lenToWrite </span><span class="cov8" title="1">{
                         break</span>
                 }
@@ -281,13 +309,9 @@ func (seg *segment) sync() error <span class="cov8" title="1">{
         <span class="cov8" title="1">return nil</span>
 }
 
-func (seg *segment) size() int64 <span class="cov0" title="0">{
-        return int64(len(seg.bbuf))
-}</span>
-
 func (seg *segment) read(idx int64) ([]byte, error) <span class="cov8" title="1">{
         for inner, pos := range seg.bpos </span><span class="cov8" title="1">{
-                if seg.startBlockId+int64(inner) == idx </span><span class="cov8" title="1">{
+                if *seg.startBlockId+int64(inner) == idx </span><span class="cov8" title="1">{
                         return seg.bbuf[pos.start+headerSize : pos.end], nil
                 }</span>
         }
@@ -295,81 +319,112 @@ func (seg *segment) read(idx int64) ([]byte, error) <span class="cov8" title="1"
         <span class="cov0" title="0">return nil, consts.NotFoundErr</span>
 }
 
-func (seg *segment) truncate(idx int64) error <span class="cov8" title="1">{
-        posOffset := idx - seg.startBlockId
+func (seg *segment) truncate(idx int64) (int64, error) <span class="cov8" title="1">{
+        // note：外部使用时可能会传超过当前segment容量的idx
+        if idx &gt; seg.nextBlockId+seg.getStartBlockId()-1 </span><span class="cov8" title="1">{
+                seg.bbuf = nil
+                seg.bpos = nil
+                seg.nextByteToSync = 0
+                err := os.Remove(seg.path)
+                if err != nil </span><span class="cov0" title="0">{
+                        return 0, err
+                }</span>
+
+                <span class="cov8" title="1">return 0, nil</span>
+        }
+
+        <span class="cov8" title="1">posOffset := idx - *seg.startBlockId
+        *seg.startBlockId = idx
         firstPosAfterTruncate := seg.bpos[posOffset]
         seg.bpos = seg.bpos[posOffset:]
         seg.bbuf = seg.bbuf[firstPosAfterTruncate.start:]
+
         // fd.Truncate 内部调用Ftruncate
-        // 是相对当前文件offset改变文件大小
-        _, err := seg.fd.Seek(firstPosAfterTruncate.start, 0)
-        if err != nil </span><span class="cov0" title="0">{
-                return err
-        }</span>
-
         // 保留截断后的文件大小
-        <span class="cov8" title="1">lbuf := int64(len(seg.bbuf))
-        err = seg.fd.Truncate(lbuf)
-        if err != nil </span><span class="cov0" title="0">{
-                return err
-        }</span>
-        <span class="cov8" title="1">seg.nextByteToSync = lbuf
-        oldPath := seg.path
-        seg.path = filepath.Join(filepath.Dir(seg.path), blockIdToBase(idx))
-        err = os.Rename(oldPath, seg.path)
-        if err != nil </span><span class="cov0" title="0">{
-                return err
-        }</span>
-        <span class="cov8" title="1">return nil</span>
-}
-
-func blockIdToBase(blockId int64) string <span class="cov8" title="1">{
-        return fmt.Sprintf("%010d", blockId)
-}</span>
-
-func baseToBlockId(base string) (int64, error) <span class="cov8" title="1">{
-        var firstBlockIdOfSegment int64
-        _, err := fmt.Sscanf(base, "%010d", &amp;firstBlockIdOfSegment)
+        lbuf := int64(len(seg.bbuf))
+        err := seg.fd.Truncate(0)
         if err != nil </span><span class="cov0" title="0">{
                 return 0, err
         }</span>
-        <span class="cov8" title="1">return firstBlockIdOfSegment, nil</span>
+        <span class="cov8" title="1">seg.nextByteToSync = 0
+        oldPath := seg.path
+        seg.path = filepath.Join(filepath.Dir(seg.path), blockIdToBase(idx, seg.hasSuffix))
+        err = os.Rename(oldPath, seg.path)
+        if err != nil </span><span class="cov0" title="0">{
+                return 0, err
+        }</span>
+        <span class="cov8" title="1">return lbuf, nil</span>
+}
+
+func (seg *segment) rename() error <span class="cov8" title="1">{
+        oldPath := seg.path
+        if seg.hasSuffix </span><span class="cov8" title="1">{
+                seg.path, _ = strings.CutSuffix(seg.path, suffix)
+        }</span> else<span class="cov0" title="0"> {
+                seg.path += suffix
+        }</span>
+
+        <span class="cov8" title="1">err := os.Rename(oldPath, seg.path)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+func blockIdToBase(blockId int64, setSuffix bool) string <span class="cov8" title="1">{
+        base := fmt.Sprintf("%08d", blockId)
+        if setSuffix </span><span class="cov8" title="1">{
+                base += suffix
+        }</span>
+        <span class="cov8" title="1">return base</span>
+}
+
+func baseToBlockId(base string) (int64, bool, error) <span class="cov8" title="1">{
+        before, found := strings.CutSuffix(base, suffix)
+        var firstBlockIdOfSegment int64
+        _, err := fmt.Sscanf(before, "%08d", &amp;firstBlockIdOfSegment)
+        if err != nil </span><span class="cov0" title="0">{
+                return 0, false, err
+        }</span>
+        <span class="cov8" title="1">return firstBlockIdOfSegment, found, nil</span>
 }
 
 // buildBinary 日志数据 -&gt; 格式化二进制数据
 // 存储在文件中的block结构：
-// |        length 8字节                |        checksum 16字节        |
-// |                                payload x字节                        |
-func buildBinary(data []byte) []byte <span class="cov8" title="1">{
+// | length 8字节 | length 8字节 | checksum 16字节 | payload x字节 |
+func buildBinary(blockId int64, data []byte) []byte <span class="cov8" title="1">{
         length := int64(len(data))
         // prof: 避免buf重分配
         buf := make([]byte, headerSize, headerSize+length)
-        binary.PutVarint(buf[:headerLengthSize], length)
-        var dataAndLength []byte
-        dataAndLength = append(dataAndLength, data...)
-        dataAndLength = append(dataAndLength, buf[:headerLengthSize]...)
-        checksum := md5.Sum(dataAndLength)
+        binary.PutVarint(buf[:headerBlockIdOffset], length)
+        binary.PutVarint(buf[headerBlockIdOffset:headerSummaryOffset], blockId)
+        var dataAndHeader []byte
+        dataAndHeader = append(dataAndHeader, data...)
+        dataAndHeader = append(dataAndHeader, buf[:headerSummaryOffset]...)
+        checksum := md5.Sum(dataAndHeader)
         for i := 0; i &lt; len(checksum); i++ </span><span class="cov8" title="1">{
-                buf[headerLengthSize+i] = checksum[i]
+                buf[headerSummaryOffset+i] = checksum[i]
         }</span>
         <span class="cov8" title="1">buf = append(buf, data...)
         return buf</span>
 }
 
 // loadBinary 从文件装载格式化二进制数据
-func loadBinary(raw []byte) ([]*bpos, []byte, error) <span class="cov8" title="1">{
+func loadBinary(raw []byte) ([]*bpos, []byte, int64, error) <span class="cov8" title="1">{
         var start int64 = 0
         // prof: 粗拍一个cap，避免小数据段导致的频繁重分配问题
-        bps := make([]*bpos, 0, 512)
-        bbf := make([]byte, 0, 5*consts.KB)
+        bps := make([]*bpos, 0, consts.KB)
+        bbf := make([]byte, 0, consts.MB)
+        var lastBlockId int64
         for </span><span class="cov8" title="1">{
                 if int64(len(raw)) == start </span><span class="cov8" title="1">{
                         break</span>
                 }
 
-                <span class="cov8" title="1">block, offset, err := parseBinary(raw[start:])
+                <span class="cov8" title="1">block, offset, blockId, err := parseBinary(raw[start:])
                 if err != nil </span><span class="cov0" title="0">{
-                        return nil, nil, err
+                        return nil, nil, 0, err
                 }</span>
 
                 <span class="cov8" title="1">bps = append(bps, &amp;bpos{
@@ -377,32 +432,33 @@ func loadBinary(raw []byte) ([]*bpos, []byte, error) <span class="cov8" title="1
                         end:   start + offset,
                 })
                 start += offset
-                bbf = append(bbf, block...)</span>
+                bbf = append(bbf, block...)
+                lastBlockId = blockId</span>
         }
 
-        <span class="cov8" title="1">return bps, bbf, nil</span>
+        <span class="cov8" title="1">return bps, bbf, lastBlockId, nil</span>
 }
 
 // parseBinary 解析单个格式化二进制数据 -&gt; 日志数据
-func parseBinary(raw []byte) ([]byte, int64, error) <span class="cov8" title="1">{
+func parseBinary(raw []byte) ([]byte, int64, int64, error) <span class="cov8" title="1">{
         // length + chechsum
         if len(raw) &lt; headerSize </span><span class="cov0" title="0">{
-                return nil, 0, consts.CorruptErr
+                return nil, 0, 0, consts.CorruptErr
         }</span>
-
-        <span class="cov8" title="1">length, _ := binary.Varint(raw[:headerLengthSize])
-        checksum := raw[headerLengthSize:headerSummarySize]
-        end := headerSize + length
+        <span class="cov8" title="1">length, _ := binary.Varint(raw[:headerBlockIdOffset])
+        blockId, _ := binary.Varint(raw[headerBlockIdOffset:headerSummaryOffset])
+        checksum := raw[headerSummaryOffset:headerDataOffset]
+        end := headerDataOffset + length
         var dataAndLength []byte
-        dataAndLength = append(dataAndLength, raw[headerSize:end]...)
-        dataAndLength = append(dataAndLength, raw[:headerLengthSize]...)
-        cc := md5.Sum(dataAndLength)
+        dataAndLength = append(dataAndLength, raw[headerDataOffset:end]...)
+        dataAndLength = append(dataAndLength, raw[:headerSummaryOffset]...)
+        current := md5.Sum(dataAndLength)
         for i := 0; i &lt; len(checksum); i++ </span><span class="cov8" title="1">{
-                if checksum[i] != cc[i] </span><span class="cov0" title="0">{
-                        return nil, 0, consts.CorruptErr
+                if checksum[i] != current[i] </span><span class="cov0" title="0">{
+                        return nil, 0, 0, consts.CorruptErr
                 }</span>
         }
-        <span class="cov8" title="1">return raw[:end], end, nil</span>
+        <span class="cov8" title="1">return raw[:end], end, blockId, nil</span>
 }
 </pre>
 		
@@ -417,10 +473,11 @@ import (
         "path/filepath"
         "sort"
         "sync"
+        "time"
 )
 
 const (
-        mask = 1e10
+        mask = 1e8
 )
 
 var DefaultOptions = &amp;Options{
@@ -491,7 +548,7 @@ func (opts *Options) check() error <span class="cov8" title="1">{
 
 // Log 先行日志
 type Log struct {
-        mu           sync.RWMutex
+        mu           sync.Mutex
         opts         *Options
         path         string     // path 先行日志的目录路径
         segmentCache *Lru       // segmentCache 记录缓存，采用LRU缓存策略
@@ -505,8 +562,10 @@ type Log struct {
         firstBlockIdx int64 // firstBlockIdx 第一个日志块idx
         lastBlockIdx  int64 // lastBlockIdx 最后一个日志块idx
 
-        closed    bool // closed 是否已经关闭
-        corrupted bool // corrupted 是否已损坏
+        closed    bool       // closed 是否已经关闭
+        corrupted bool       // corrupted 是否已损坏
+        bgfailed  bool       // bgfailed 后台协程执行失败
+        notifier  chan error // notifier wal主协程与子协程的同步渠道
 }
 
 func Open(dirPath string, opts *Options) (*Log, error) <span class="cov8" title="1">{
@@ -525,6 +584,7 @@ func Open(dirPath string, opts *Options) (*Log, error) <span class="cov8" title=
                 segmentCache:  newLru(opts.segmentCacheSize),
                 firstBlockIdx: math.MaxInt64,
                 lastBlockIdx:  0,
+                notifier:      make(chan error),
         }
 
         err = wal.init()
@@ -532,6 +592,9 @@ func Open(dirPath string, opts *Options) (*Log, error) <span class="cov8" title=
                 return nil, err
         }</span>
 
+        <span class="cov8" title="1">if wal.opts.noSync </span><span class="cov8" title="1">{
+                wal.notifier &lt;- nil
+        }</span>
         <span class="cov8" title="1">return wal, nil</span>
 }
 
@@ -556,8 +619,9 @@ func (wal *Log) init() error <span class="cov8" title="1">{
                 return consts.InvalidParamErr
         }</span>
 
+        <span class="cov8" title="1">var activeSegment *segment
         // 遍历日志目录，获取全量数据文件信息
-        <span class="cov8" title="1">if err = filepath.WalkDir(wal.path, func(path string, de fs.DirEntry, err error) error </span><span class="cov8" title="1">{
+        if err = filepath.WalkDir(wal.path, func(path string, de fs.DirEntry, err error) error </span><span class="cov8" title="1">{
                 if err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
@@ -571,60 +635,119 @@ func (wal *Log) init() error <span class="cov8" title="1">{
                         return filepath.SkipDir
                 }</span>
 
-                <span class="cov8" title="1">wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, de.Name()), wal.opts.segmentSize))
-                firstBlockIdOfSegment, err := baseToBlockId(de.Name())
+                <span class="cov8" title="1">currentSegment := newSegment(filepath.Join(wal.path, de.Name()), wal.opts.segmentSize)
+                wal.segments = append(wal.segments, currentSegment)
+                firstBlockIdOfSegment, hasSuffix, err := baseToBlockId(de.Name())
                 if err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
 
-                <span class="cov8" title="1">wal.firstBlockIdx = int64(math.Min(float64(wal.firstBlockIdx), float64(firstBlockIdOfSegment)))
-                return nil</span>
+                <span class="cov8" title="1">if hasSuffix </span><span class="cov8" title="1">{
+                        // wal目录下多个segment文件存在.active后缀时
+                        // 清除startBlockId小的segment文件.active后缀
+                        if activeSegment == nil </span><span class="cov8" title="1">{
+                                activeSegment = currentSegment
+                        }</span> else<span class="cov0" title="0"> {
+                                segmentToRename := currentSegment
+                                if firstBlockIdOfSegment &gt; activeSegment.getStartBlockId() </span><span class="cov0" title="0">{
+                                        segmentToRename = activeSegment
+                                        activeSegment = currentSegment
+                                }</span>
+
+                                <span class="cov0" title="0">err := segmentToRename.rename()
+                                if err != nil </span><span class="cov0" title="0">{
+                                        return err
+                                }</span>
+                        }
+                }
+                <span class="cov8" title="1">return nil</span>
         }); err != nil <span class="cov0" title="0">{
                 return err
         }</span>
 
-        // 目录下没有数据文件
-        <span class="cov8" title="1">if len(wal.segments) == 0 </span><span class="cov8" title="1">{
-                wal.firstBlockIdx = wal.lastBlockIdx
-                first := newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx)), wal.opts.segmentSize)
-                wal.segments = append(wal.segments, first)
-                wal.activeSegment = first
-        }</span> else<span class="cov8" title="1"> {
-                sort.Slice(wal.segments, func(i, j int) bool </span><span class="cov0" title="0">{
-                        return wal.segments[i].getStartBlockId() &lt; wal.segments[j].getStartBlockId()
-                }</span>)
-                <span class="cov8" title="1">wal.activeSegment = wal.segments[len(wal.segments)-1]</span>
-        }
+        <span class="cov8" title="1">if activeSegment == nil </span><span class="cov8" title="1">{
+                activeSegment = newSegment(filepath.Join(wal.path, blockIdToBase(0, true)), wal.opts.segmentSize)
+        }</span>
 
-        <span class="cov8" title="1">err = wal.activeSegment.open(wal.opts.dataPerm)
+        <span class="cov8" title="1">err = activeSegment.open(wal.opts.dataPerm)
         if err != nil </span><span class="cov0" title="0">{
                 if errors.Is(err, consts.CorruptErr) </span><span class="cov0" title="0">{
                         wal.corrupted = true
                 }</span>
                 <span class="cov0" title="0">return err</span>
         }
-        <span class="cov8" title="1">wal.lastBlockIdx = wal.activeSegment.getStartBlockId() + int64(len(wal.activeSegment.bpos))
 
-        return nil</span>
+        // 目录下没有数据文件
+        <span class="cov8" title="1">if len(wal.segments) == 0 </span><span class="cov8" title="1">{
+                wal.firstBlockIdx = wal.lastBlockIdx
+                wal.segments = append(wal.segments, activeSegment)
+                wal.activeSegment = activeSegment
+                wal.lastBlockIdx = wal.activeSegment.getStartBlockId()
+        }</span> else<span class="cov8" title="1"> {
+                wal.sortSegments()
+                wal.activeSegment = activeSegment
+                for idx, seg := range wal.segments </span><span class="cov8" title="1">{
+                        if seg == wal.activeSegment </span><span class="cov8" title="1">{
+                                firstSegmentIdx := (idx + 1) % len(wal.segments)
+                                wal.firstBlockIdx = wal.segments[firstSegmentIdx].getStartBlockId()
+                        }</span>
+                }
+                // note: 必须在打开文件后才能读取到bpos的长度
+                <span class="cov8" title="1">wal.lastBlockIdx = wal.activeSegment.getStartBlockId() + int64(len(wal.activeSegment.bpos)) - 1</span>
+        }
+
+        // 最终一致性场景下使用后台协程定时刷盘
+        // 刷盘周期默认1s
+        <span class="cov8" title="1">if wal.opts.noSync </span><span class="cov8" title="1">{
+                go func() </span><span class="cov8" title="1">{
+                        &lt;-wal.notifier
+                        ticker := time.NewTicker(time.Second)
+                        for </span><span class="cov8" title="1">{
+                                select </span>{
+                                case &lt;-wal.notifier:<span class="cov8" title="1">
+                                        return</span>
+                                case &lt;-ticker.C:<span class="cov8" title="1">
+                                        // note: ticker和notifier同时可消费时notifier更高优
+                                        wal.mu.Lock()
+                                        if wal.closed </span><span class="cov8" title="1">{
+                                                wal.mu.Unlock()
+                                                return
+                                        }</span>
+                                        <span class="cov8" title="1">wal.mu.Unlock()
+
+                                        err := wal.Sync()
+                                        if err != nil </span><span class="cov0" title="0">{
+                                                wal.mu.Lock()
+                                                wal.bgfailed = true
+                                                wal.mu.Unlock()
+                                                return
+                                        }</span>
+                                }
+                        }
+                }()
+        }
+
+        <span class="cov8" title="1">return nil</span>
 }
 
-func (wal *Log) Close() (err error) <span class="cov8" title="1">{
+func (wal *Log) Close() error <span class="cov8" title="1">{
         wal.mu.Lock()
         defer wal.mu.Unlock()
 
         if wal.closed </span><span class="cov0" title="0">{
-                err = consts.FileClosedErr
-                return
+                return consts.FileClosedErr
         }</span>
 
-        <span class="cov8" title="1">e := wal.activeSegment.close()
-        if e != nil </span><span class="cov0" title="0">{
-                err = e
-                return
+        <span class="cov8" title="1">err := wal.activeSegment.close()
+        if err != nil </span><span class="cov0" title="0">{
+                return err
         }</span>
 
         <span class="cov8" title="1">wal.closed = true
-        return</span>
+
+        // 关闭管道通知后台子协程结束
+        close(wal.notifier)
+        return nil</span>
 }
 
 // Write 写入wal日志数据
@@ -635,47 +758,59 @@ func (wal *Log) Write(data []byte) (int64, error) <span class="cov8" title="1">{
         wal.mu.Lock()
         defer wal.mu.Unlock()
 
-        if wal.closed </span><span class="cov0" title="0">{
-                return 0, consts.FileClosedErr
-        }</span> else<span class="cov8" title="1"> if wal.corrupted </span><span class="cov0" title="0">{
-                return 0, consts.CorruptErr
+        err := wal.stateCheck()
+        if err != nil </span><span class="cov0" title="0">{
+                return 0, err
         }</span>
 
-        <span class="cov8" title="1">wal.lastBlockIdx = (wal.lastBlockIdx + 1) % mask
         // 循环写日志时可能日志文件夹下内容写满
         // 需要考虑lastBlockIdx追上firstBlockIdx的情况
-        if wal.lastBlockIdx == wal.firstBlockIdx </span><span class="cov0" title="0">{
+        <span class="cov8" title="1">nextLastBlockIdx := (wal.lastBlockIdx + 1) % mask
+        if nextLastBlockIdx == wal.firstBlockIdx </span><span class="cov0" title="0">{
                 return 0, consts.WalFullErr
         }</span>
+        <span class="cov8" title="1">wal.lastBlockIdx = nextLastBlockIdx
 
-        <span class="cov8" title="1">err := wal.activeSegment.write(data)
-        if err != nil </span><span class="cov0" title="0">{
+        err = wal.activeSegment.write(data)
+        if err != nil </span><span class="cov8" title="1">{
                 // 如果当前segment满了
                 // 那么新开一个segment
-                if errors.Is(err, consts.SegmentFullErr) </span><span class="cov0" title="0">{
+                if errors.Is(err, consts.SegmentFullErr) </span><span class="cov8" title="1">{
                         err := wal.activeSegment.close()
                         if err != nil </span><span class="cov0" title="0">{
                                 return 0, err
                         }</span>
 
-                        <span class="cov0" title="0">wal.segments = append(wal.segments, newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx)), wal.opts.segmentSize))
-                        wal.activeSegment = wal.segments[len(wal.segments)-1]
-                        err = wal.activeSegment.open(wal.opts.dataPerm)
+                        <span class="cov8" title="1">nextActiveSegment := newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx, true)), wal.opts.segmentSize)
+                        wal.segments = append(wal.segments, nextActiveSegment)
+                        err = nextActiveSegment.open(wal.opts.dataPerm)
                         if err != nil </span><span class="cov0" title="0">{
                                 return 0, err
                         }</span>
+
+                        // 在下个segment文件创建成功后再去掉activeSegment文件名
+                        // 避免出现wal目录下出现没有segment文件有.active后缀的情况
+                        // 如果rename失败，wal目录下会出现多个segment文件有.active
+                        // 后缀的情况，wal.init()会选择有.active后缀且startBlockId
+                        // 最大的segment文件作为activeSegment
+                        <span class="cov8" title="1">err = wal.activeSegment.rename()
+                        if err != nil </span><span class="cov0" title="0">{
+                                return 0, err
+                        }</span>
+                        <span class="cov8" title="1">wal.activeSegment = nextActiveSegment
 
                         // 如果segmentSize设置小于一次单wal日志数据最大体积
                         // 那么可能出现新建一个segment也写入失败的问题
-                        <span class="cov0" title="0">err = wal.activeSegment.write(data)
+                        err = wal.activeSegment.write(data)
                         if err != nil </span><span class="cov0" title="0">{
                                 return 0, err
                         }</span>
-                }
-                <span class="cov0" title="0">return 0, err</span>
+                } else<span class="cov0" title="0"> {
+                        return 0, err
+                }</span>
         }
 
-        <span class="cov8" title="1">if !wal.opts.noSync </span><span class="cov8" title="1">{
+        <span class="cov8" title="1">if !wal.opts.noSync </span><span class="cov0" title="0">{
                 err = wal.activeSegment.sync()
                 if err != nil </span><span class="cov0" title="0">{
                         return 0, err
@@ -686,17 +821,17 @@ func (wal *Log) Write(data []byte) (int64, error) <span class="cov8" title="1">{
 }
 
 func (wal *Log) Read(idx int64) ([]byte, error) <span class="cov8" title="1">{
-        wal.mu.RLock()
-        defer wal.mu.RUnlock()
+        wal.mu.Lock()
+        defer wal.mu.Unlock()
 
-        if wal.closed </span><span class="cov0" title="0">{
-                return nil, consts.FileClosedErr
-        }</span> else<span class="cov8" title="1"> if wal.corrupted </span><span class="cov0" title="0">{
-                return nil, consts.CorruptErr
+        err := wal.stateCheck()
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
         }</span>
 
-        <span class="cov8" title="1">if idx &lt; wal.firstBlockIdx || idx &gt;= wal.lastBlockIdx </span><span class="cov0" title="0">{
-                return nil, consts.NotFoundErr
+        <span class="cov8" title="1">err = wal.checkRange(idx)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
         }</span>
 
         <span class="cov8" title="1">targetSegment := wal.findSegment(idx)
@@ -705,80 +840,98 @@ func (wal *Log) Read(idx int64) ([]byte, error) <span class="cov8" title="1">{
                 return cacheSeg.(*segment).read(idx)
         }</span>
 
-        <span class="cov8" title="1">err := targetSegment.open(wal.opts.dataPerm)
-        if err != nil </span><span class="cov0" title="0">{
-                return nil, err
-        }</span>
+        <span class="cov8" title="1">if targetSegment != wal.activeSegment </span><span class="cov8" title="1">{
+                err = targetSegment.open(wal.opts.dataPerm)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+        }
 
-        <span class="cov8" title="1">wal.segmentCache.write(blockId, targetSegment)
+        <span class="cov8" title="1">eliminatedSegment := wal.segmentCache.write(blockId, targetSegment)
+        if eliminatedSegment != nil </span><span class="cov0" title="0">{
+                err := eliminatedSegment.(*segment).close()
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+        }
 
-        return targetSegment.read(idx)</span>
+        <span class="cov8" title="1">return targetSegment.read(idx)</span>
 }
 
 func (wal *Log) Sync() error <span class="cov8" title="1">{
-        return wal.activeSegment.sync()
-}</span>
+        wal.mu.Lock()
+        defer wal.mu.Unlock()
+
+        err := wal.stateCheck()
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">return wal.activeSegment.sync()</span>
+}
 
 func (wal *Log) Truncate(idx int64) error <span class="cov8" title="1">{
         wal.mu.Lock()
         defer wal.mu.Unlock()
 
-        if wal.closed </span><span class="cov0" title="0">{
-                return consts.FileClosedErr
-        }</span> else<span class="cov8" title="1"> if wal.corrupted </span><span class="cov0" title="0">{
-                return consts.CorruptErr
+        err := wal.stateCheck()
+        if err != nil </span><span class="cov0" title="0">{
+                return err
         }</span>
 
-        <span class="cov8" title="1">if idx &lt; wal.firstBlockIdx || idx &gt; wal.lastBlockIdx </span><span class="cov0" title="0">{
-                return consts.InvalidParamErr
+        <span class="cov8" title="1">err = wal.checkRange(idx)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
         }</span>
 
         <span class="cov8" title="1">targetSegment := wal.findSegment(idx)
-        for i, seg := range wal.segments </span><span class="cov8" title="1">{
-                if seg == targetSegment </span><span class="cov8" title="1">{
-                        wal.segments = wal.segments[i:]
-                        break</span>
+        firstSegment := wal.findSegment(wal.firstBlockIdx)
+        for _, seg := range wal.segments </span><span class="cov8" title="1">{
+                // note: c1 和 c2 对应 firstBlockIdx 与 lastBlockIdx 之间的两种情况。见 checkRange
+                c1 := wal.firstBlockIdx &lt;= wal.lastBlockIdx &amp;&amp; (firstSegment.getStartBlockId() &lt;= seg.getStartBlockId() &amp;&amp; seg.getStartBlockId() &lt;= targetSegment.getStartBlockId())
+                c2 := wal.firstBlockIdx &gt; wal.lastBlockIdx &amp;&amp; (seg.getStartBlockId() &lt;= targetSegment.getStartBlockId() &amp;&amp; firstSegment.getStartBlockId() &gt;= seg.getStartBlockId())
+                if c1 || c2 </span><span class="cov8" title="1">{
+                        if seg == wal.activeSegment </span><span class="cov8" title="1">{
+                                _, err = wal.activeSegment.truncate(idx)
+                                if err != nil </span><span class="cov0" title="0">{
+                                        return err
+                                }</span>
+
+                                <span class="cov8" title="1">err = wal.activeSegment.sync()
+                                if err != nil </span><span class="cov0" title="0">{
+                                        return err
+                                }</span>
+
+                                <span class="cov8" title="1">wal.firstBlockIdx = wal.activeSegment.getStartBlockId()</span>
+                        } else<span class="cov8" title="1"> {
+                                err = seg.open(wal.opts.dataPerm)
+                                if err != nil </span><span class="cov0" title="0">{
+                                        return err
+                                }</span>
+
+                                <span class="cov8" title="1">remain, err := seg.truncate(idx)
+                                if err != nil </span><span class="cov0" title="0">{
+                                        return err
+                                }</span>
+
+                                <span class="cov8" title="1">err = seg.close()
+                                if err != nil </span><span class="cov0" title="0">{
+                                        return err
+                                }</span>
+
+                                <span class="cov8" title="1">if remain != 0 </span><span class="cov8" title="1">{
+                                        wal.firstBlockIdx = seg.getStartBlockId()
+                                }</span>
+                        }
                 }
-
-                // idx之前的文件删除
-                <span class="cov0" title="0">err := os.Remove(seg.path)
-                if err != nil </span><span class="cov0" title="0">{
-                        return err
-                }</span>
         }
 
-        <span class="cov8" title="1">if targetSegment == wal.activeSegment </span><span class="cov8" title="1">{
-                err := wal.activeSegment.truncate(idx)
-                if err != nil </span><span class="cov0" title="0">{
-                        return err
-                }</span>
-
-                <span class="cov8" title="1">err = wal.activeSegment.sync()
-                if err != nil </span><span class="cov0" title="0">{
-                        return err
-                }</span>
-
-                <span class="cov8" title="1">return nil</span>
-        } else<span class="cov0" title="0"> {
-                err := targetSegment.open(wal.opts.dataPerm)
-                if err != nil </span><span class="cov0" title="0">{
-                        return err
-                }</span>
-
-                <span class="cov0" title="0">err = targetSegment.truncate(idx)
-                if err != nil </span><span class="cov0" title="0">{
-                        return err
-                }</span>
-
-                <span class="cov0" title="0">err = targetSegment.close()
-                if err != nil </span><span class="cov0" title="0">{
-                        return err
-                }</span>
-                <span class="cov0" title="0">return nil</span>
-        }
+        <span class="cov8" title="1">return nil</span>
 }
 
 func (wal *Log) findSegment(idx int64) *segment <span class="cov8" title="1">{
+        // note: 众所周知，二分搜索要求序列有序
+        wal.sortSegments()
         target := sort.Search(len(wal.segments), func(i int) bool </span><span class="cov8" title="1">{
                 return wal.segments[i].getStartBlockId() &gt;= idx
         }</span>)
@@ -788,6 +941,39 @@ func (wal *Log) findSegment(idx int64) *segment <span class="cov8" title="1">{
         }</span>
 
         <span class="cov8" title="1">return wal.segments[target]</span>
+}
+
+func (wal *Log) stateCheck() error <span class="cov8" title="1">{
+        if wal.closed </span><span class="cov0" title="0">{
+                return consts.FileClosedErr
+        }</span> else<span class="cov8" title="1"> if wal.corrupted </span><span class="cov0" title="0">{
+                return consts.CorruptErr
+        }</span> else<span class="cov8" title="1"> if wal.bgfailed </span><span class="cov0" title="0">{
+                return consts.BackgroundErr
+        }</span>
+        <span class="cov8" title="1">return nil</span>
+}
+
+func (wal *Log) sortSegments() <span class="cov8" title="1">{
+        sort.Slice(wal.segments, func(i, j int) bool </span><span class="cov8" title="1">{
+                return wal.segments[i].getStartBlockId() &lt; wal.segments[j].getStartBlockId()
+        }</span>)
+}
+
+func (wal *Log) checkRange(idx int64) error <span class="cov8" title="1">{
+        // 正常情况，lastBlockIdx 比 firstBlockIdx 大
+        // 认为idx比 firstBlockIdx 小或者idx比 lastBlockIdx 时参数非法
+        if wal.firstBlockIdx &lt;= wal.lastBlockIdx &amp;&amp; (idx &lt; wal.firstBlockIdx || idx &gt; wal.lastBlockIdx) </span><span class="cov0" title="0">{
+                return consts.InvalidParamErr
+        }</span>
+
+        // 当日志开始循环，可能出现 lastBlockIdx 比 firstBlockIdx 小的情况
+        // 此时认为idx在 lastBlockIdx 与 firstBlockIdx 之间为非法情况
+        <span class="cov8" title="1">if wal.firstBlockIdx &gt; wal.lastBlockIdx &amp;&amp; (wal.lastBlockIdx &lt; idx &amp;&amp; idx &lt; wal.firstBlockIdx) </span><span class="cov0" title="0">{
+                return consts.InvalidParamErr
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
 }
 </pre>
 		

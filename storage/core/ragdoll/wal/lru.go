@@ -37,7 +37,7 @@ func (lru *Lru) read(key interface{}) interface{} {
 	return elem.Value.(*item).v
 }
 
-func (lru *Lru) write(key, data interface{}) {
+func (lru *Lru) write(key, data interface{}) interface{} {
 	lru.mu.Lock()
 	defer lru.mu.Unlock()
 
@@ -48,7 +48,7 @@ func (lru *Lru) write(key, data interface{}) {
 			k: key,
 			v: data,
 		}
-		return
+		return nil
 	}
 
 	lru.m[key] = lru.list.PushFront(&item{
@@ -56,6 +56,9 @@ func (lru *Lru) write(key, data interface{}) {
 		v: data,
 	})
 	if lru.list.Len() > lru.size {
-		delete(lru.m, lru.list.Remove(lru.list.Back()).(*item).k)
+		item := lru.list.Remove(lru.list.Back()).(*item)
+		delete(lru.m, item.k)
+		return item.v
 	}
+	return nil
 }
