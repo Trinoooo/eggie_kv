@@ -3,8 +3,8 @@ package wal
 import (
 	"errors"
 	"github.com/Trinoooo/eggie_kv/consts"
+	"github.com/Trinoooo/eggie_kv/utils"
 	"io/fs"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,17 +12,20 @@ import (
 	"time"
 )
 
-const (
-	mask = 1e8
-)
+// todo：加日志！
+
+func getMask() int64 {
+	return utils.GetValueOnEnv(1e10, 1e8).(int64)
+}
 
 // Options wal日志选项
 type Options struct {
 	// dirPerm 先行日志目录文件权限位
 	// dataPerm 先行日志数据文件权限位
 	dataPerm, dirPerm os.FileMode
-	segmentSize       int64 // maxSegmentSize segment数据文件最大大小
-	segmentCacheSize  int   // 内存中缓存的segment内容数量
+	segmentFileSize   int64 // segmentFileSize segment数据文件最大大小
+	// todo: 命名
+	segmentCacheSize int // 内存中缓存的segment内容数量
 	// noSync 当设置为true时，只有segment写满
 	// 才持久化到磁盘。可以提高写性能，但需要承担
 	// 数据丢失的风险。
@@ -33,7 +36,7 @@ func NewOptions() *Options {
 	return &Options{
 		dataPerm:         0660,
 		dirPerm:          0770,
-		segmentSize:      10 * consts.MB,
+		segmentFileSize:  10 * consts.MB,
 		segmentCacheSize: 3,
 		noSync:           false,
 	}
@@ -49,8 +52,8 @@ func (opts *Options) SetDirPerm(dirPerm os.FileMode) *Options {
 	return opts
 }
 
-func (opts *Options) SetSegmentSize(segmentSize int64) *Options {
-	opts.segmentSize = segmentSize
+func (opts *Options) SetSegmentSize(segmentFileSize int64) *Options {
+	opts.segmentFileSize = segmentFileSize
 	return opts
 }
 
@@ -64,6 +67,7 @@ func (opts *Options) SetNoSync() *Options {
 	return opts
 }
 
+// todo：考虑特殊权限位
 func (opts *Options) check() error {
 	if opts.dataPerm == 0 || opts.dataPerm > 0777 {
 		return consts.InvalidParamErr
@@ -77,6 +81,7 @@ func (opts *Options) check() error {
 		return consts.InvalidParamErr
 	}
 
+	// todo：对segmentFileSize做校验
 	return nil
 }
 
@@ -84,7 +89,7 @@ func (opts *Options) check() error {
 type Log struct {
 	mu           sync.Mutex
 	opts         *Options
-	path         string     // path 先行日志的目录路径
+	dirPath      string     // dirPath 先行日志的目录路径
 	segmentCache *Lru       // segmentCache 记录缓存，采用LRU缓存策略
 	segments     []*segment // segments 所有已知的segment
 
@@ -96,30 +101,41 @@ type Log struct {
 	firstBlockIdx int64 // firstBlockIdx 第一个日志块idx
 	lastBlockIdx  int64 // lastBlockIdx 最后一个日志块idx
 
-	closed    bool       // closed 是否已经关闭
-	corrupted bool       // corrupted 是否已损坏
-	bgfailed  bool       // bgfailed 后台协程执行失败
-	notifier  chan error // notifier wal主协程与子协程的同步渠道
+	closed    bool // closed 是否已经关闭
+	corrupted bool // corrupted 是否已损坏
+	bgfailed  bool // bgfailed 后台协程执行失败
+
+	// notifier wal主协程与子协程的同步管道
+	// 只有设置 opts.noSync 为true时会用到
+	notifier chan error
 }
 
-func Open(dirPath string, opts *Options) (*Log, error) {
+func Open(dirPath string, opts *Options) (_ *Log, err error) {
 	if opts == nil {
-		// note: 多次调用NewOptions会导致全局DefaultOptions字段值改变
 		opts = NewOptions()
 	}
 
-	err := opts.check()
+	err = opts.check()
 	if err != nil {
 		return nil, err
 	}
 
 	wal := &Log{
-		path:          dirPath,
+		dirPath:       dirPath,
 		opts:          opts,
 		segmentCache:  newLru(opts.segmentCacheSize),
-		firstBlockIdx: math.MaxInt64,
+		firstBlockIdx: 0,
 		lastBlockIdx:  0,
-		notifier:      make(chan error),
+	}
+
+	if wal.opts.noSync {
+		wal.notifier = make(chan error)
+		defer func() {
+			if err != nil {
+				return
+			}
+			wal.notifier <- nil
+		}()
 	}
 
 	err = wal.init()
@@ -127,22 +143,20 @@ func Open(dirPath string, opts *Options) (*Log, error) {
 		return nil, err
 	}
 
-	if wal.opts.noSync {
-		wal.notifier <- nil
-	}
 	return wal, nil
 }
 
 // init 读文件，初始化wal
 func (wal *Log) init() error {
+	// todo: 封装方法
 	// 检查目录是否存在，如不存在则创建
-	stat, err := os.Stat(wal.path)
+	stat, err := os.Stat(wal.dirPath)
 	if errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(wal.path, wal.opts.dirPerm); err != nil {
+		if err := os.MkdirAll(wal.dirPath, wal.opts.dirPerm); err != nil {
 			return consts.MkdirErr
 		}
 
-		stat, err = os.Stat(wal.path)
+		stat, err = os.Stat(wal.dirPath)
 		if err != nil {
 			return consts.FileStatErr
 		}
@@ -156,12 +170,13 @@ func (wal *Log) init() error {
 
 	var activeSegment *segment
 	// 遍历日志目录，获取全量数据文件信息
-	if err = filepath.WalkDir(wal.path, func(path string, de fs.DirEntry, err error) error {
+	if err = filepath.WalkDir(wal.dirPath, func(path string, de fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
-		if path == wal.path {
+		// todo：看下为啥这样写
+		if path == wal.dirPath {
 			return err
 		}
 
@@ -170,7 +185,7 @@ func (wal *Log) init() error {
 			return filepath.SkipDir
 		}
 
-		currentSegment := newSegment(filepath.Join(wal.path, de.Name()), wal.opts.segmentSize)
+		currentSegment := newSegment(filepath.Join(wal.dirPath, de.Name()), wal.opts.segmentFileSize)
 		wal.segments = append(wal.segments, currentSegment)
 		firstBlockIdOfSegment, hasSuffix, err := baseToBlockId(de.Name())
 		if err != nil {
@@ -183,6 +198,7 @@ func (wal *Log) init() error {
 			if activeSegment == nil {
 				activeSegment = currentSegment
 			} else {
+				// todo：bugfix 有多个文件存在.active后缀的情况下，可能idx小的文件是真正的activeSegment
 				segmentToRename := currentSegment
 				if firstBlockIdOfSegment > activeSegment.getStartBlockId() {
 					segmentToRename = activeSegment
@@ -200,27 +216,29 @@ func (wal *Log) init() error {
 		return err
 	}
 
+	// 目录下没有segment的情况
+	// 首次启动 & truncate
 	if activeSegment == nil {
-		activeSegment = newSegment(filepath.Join(wal.path, blockIdToBase(0, true)), wal.opts.segmentSize)
+		activeSegment = newSegment(filepath.Join(wal.dirPath, blockIdToBase(0, true)), wal.opts.segmentFileSize)
+		wal.segments = append(wal.segments, activeSegment)
 	}
+	wal.activeSegment = activeSegment
 
 	err = activeSegment.open(wal.opts.dataPerm)
 	if err != nil {
+		// todo：调研 损坏恢复
 		if errors.Is(err, consts.CorruptErr) {
 			wal.corrupted = true
 		}
 		return err
 	}
 
-	// 目录下没有数据文件
+	// 构建firstBlockId和lastBlockId
 	if len(wal.segments) == 0 {
-		wal.firstBlockIdx = wal.lastBlockIdx
-		wal.segments = append(wal.segments, activeSegment)
-		wal.activeSegment = activeSegment
+		// todo：idx为0的block会被跳过
 		wal.lastBlockIdx = wal.activeSegment.getStartBlockId()
 	} else {
 		wal.sortSegments()
-		wal.activeSegment = activeSegment
 		for idx, seg := range wal.segments {
 			if seg == wal.activeSegment {
 				firstSegmentIdx := (idx + 1) % len(wal.segments)
@@ -236,12 +254,14 @@ func (wal *Log) init() error {
 	if wal.opts.noSync {
 		go func() {
 			<-wal.notifier
+			// todo: 暴露刷盘周期
 			ticker := time.NewTicker(time.Second)
 			for {
 				select {
 				case <-wal.notifier:
 					return
 				case <-ticker.C:
+					// todo: 去掉close之后再看下是否有问题
 					// note: ticker和notifier同时可消费时notifier更高优
 					wal.mu.Lock()
 					if wal.closed {
@@ -273,6 +293,7 @@ func (wal *Log) Close() error {
 		return consts.FileClosedErr
 	}
 
+	// todo：cache里打开的文件没关
 	err := wal.activeSegment.close()
 	if err != nil {
 		return err
@@ -300,7 +321,7 @@ func (wal *Log) Write(data []byte) (int64, error) {
 
 	// 循环写日志时可能日志文件夹下内容写满
 	// 需要考虑lastBlockIdx追上firstBlockIdx的情况
-	nextLastBlockIdx := (wal.lastBlockIdx + 1) % mask
+	nextLastBlockIdx := (wal.lastBlockIdx + 1) % getMask()
 	if nextLastBlockIdx == wal.firstBlockIdx {
 		return 0, consts.WalFullErr
 	}
@@ -316,7 +337,7 @@ func (wal *Log) Write(data []byte) (int64, error) {
 				return 0, err
 			}
 
-			nextActiveSegment := newSegment(filepath.Join(wal.path, blockIdToBase(wal.lastBlockIdx, true)), wal.opts.segmentSize)
+			nextActiveSegment := newSegment(filepath.Join(wal.dirPath, blockIdToBase(wal.lastBlockIdx, true)), wal.opts.segmentFileSize)
 			wal.segments = append(wal.segments, nextActiveSegment)
 			err = nextActiveSegment.open(wal.opts.dataPerm)
 			if err != nil {
@@ -338,6 +359,7 @@ func (wal *Log) Write(data []byte) (int64, error) {
 			// 那么可能出现新建一个segment也写入失败的问题
 			err = wal.activeSegment.write(data)
 			if err != nil {
+				// todo: 加对consts.SegmentFullErr的特判
 				return 0, err
 			}
 		} else {
@@ -354,6 +376,8 @@ func (wal *Log) Write(data []byte) (int64, error) {
 
 	return wal.lastBlockIdx, nil
 }
+
+// todo：加mread
 
 func (wal *Log) Read(idx int64) ([]byte, error) {
 	wal.mu.Lock()
@@ -405,6 +429,7 @@ func (wal *Log) Sync() error {
 	return wal.activeSegment.sync()
 }
 
+// todo：加注释
 func (wal *Log) Truncate(idx int64) error {
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
@@ -419,6 +444,7 @@ func (wal *Log) Truncate(idx int64) error {
 		return err
 	}
 
+	// todo：idx比firstSegment小
 	targetSegment := wal.findSegment(idx)
 	firstSegment := wal.findSegment(wal.firstBlockIdx)
 	for _, seg := range wal.segments {
@@ -470,6 +496,7 @@ func (wal *Log) Truncate(idx int64) error {
 func (wal *Log) findSegment(idx int64) *segment {
 	// note: 众所周知，二分搜索要求序列有序
 	wal.sortSegments()
+	// todo：bugfix 如果要找的segment是最后一个
 	target := sort.Search(len(wal.segments), func(i int) bool {
 		return wal.segments[i].getStartBlockId() >= idx
 	})
@@ -493,6 +520,7 @@ func (wal *Log) stateCheck() error {
 }
 
 func (wal *Log) sortSegments() {
+	// todo：设置脏位
 	sort.Slice(wal.segments, func(i, j int) bool {
 		return wal.segments[i].getStartBlockId() < wal.segments[j].getStartBlockId()
 	})

@@ -26,7 +26,11 @@ const (
 	headerDataOffset    = 32
 )
 
-const suffix = ".active"
+const suffix = ".active" // suffix 活跃segment文件的后缀标识
+
+func getBaseFormat() string {
+	return utils.GetValueOnEnv("%010d", "%08d").(string)
+}
 
 type bpos struct {
 	start int64
@@ -44,7 +48,7 @@ type segment struct {
 	// 当文件剩余容量不足以再写下一个完整block时
 	// 文件末尾剩余内容不再使用，保证文件开头是一个完整的block
 	bbuf []byte
-	// bpos 指示bbuf中每个block的位置
+	// bpos 指示 bbuf 中每个block的位置
 	// start 表示起始偏移量
 	// end 表示结束偏移量
 	bpos           []*bpos
@@ -62,6 +66,7 @@ func newSegment(path string, maxSize int64) *segment {
 }
 
 func (seg *segment) getStartBlockId() int64 {
+	// todo: startBlockId 用指针还是非法值
 	if seg.startBlockId != nil {
 		return *seg.startBlockId
 	}
@@ -114,6 +119,7 @@ func (seg *segment) close() error {
 		return err
 	}
 
+	// note：避免内存泄漏
 	seg.bbuf = nil
 	seg.bpos = nil
 	return nil
@@ -121,8 +127,8 @@ func (seg *segment) close() error {
 
 // write 写日志到数据文件中。
 func (seg *segment) write(data []byte) error {
-	b := buildBinary(seg.nextBlockId, data)
-	lb := int64(len(b))
+	// todo: 优化命名
+	lb := int64(len(data) + headerSize)
 	lbbf := int64(len(seg.bbuf))
 	if lb+lbbf > seg.maxSize {
 		return consts.SegmentFullErr
@@ -133,19 +139,15 @@ func (seg *segment) write(data []byte) error {
 		end:   lbbf + lb,
 	})
 	seg.nextBlockId++
-	seg.bbuf = append(seg.bbuf, b...)
+	seg.bbuf = append(seg.bbuf, buildBinary(seg.nextBlockId, data)...)
 	return nil
 }
 
 // sync 持久化数据到磁盘
-// todo: 文件完整性
+// todo: 文件完整性，问下gpt
 func (seg *segment) sync() error {
 	var written int64
 	lenToWrite := int64(len(seg.bbuf)) - seg.nextByteToSync
-	// fast-through
-	if lenToWrite == 0 {
-		return nil
-	}
 
 	for {
 		if written == lenToWrite {
@@ -158,8 +160,13 @@ func (seg *segment) sync() error {
 
 		written += int64(n)
 	}
-	seg.nextByteToSync = int64(len(seg.bbuf))
 
+	// fast-through
+	if written == 0 {
+		return nil
+	}
+
+	seg.nextByteToSync = int64(len(seg.bbuf))
 	err := seg.fd.Sync()
 	if err != nil {
 		return err
@@ -169,8 +176,10 @@ func (seg *segment) sync() error {
 }
 
 func (seg *segment) read(idx int64) ([]byte, error) {
-	for inner, pos := range seg.bpos {
-		if *seg.startBlockId+int64(inner) == idx {
+	// todo： 可以二分优化
+	for i, pos := range seg.bpos {
+		if *seg.startBlockId+int64(i) == idx {
+			// bugfix: 读到的内容没有去掉header
 			return seg.bbuf[pos.start+headerSize : pos.end], nil
 		}
 	}
@@ -232,7 +241,7 @@ func (seg *segment) rename() error {
 }
 
 func blockIdToBase(blockId int64, setSuffix bool) string {
-	base := fmt.Sprintf("%08d", blockId)
+	base := fmt.Sprintf(getBaseFormat(), blockId)
 	if setSuffix {
 		base += suffix
 	}
@@ -240,18 +249,19 @@ func blockIdToBase(blockId int64, setSuffix bool) string {
 }
 
 func baseToBlockId(base string) (int64, bool, error) {
-	before, found := strings.CutSuffix(base, suffix)
+	blockIdStr, hasSuffix := strings.CutSuffix(base, suffix)
 	var firstBlockIdOfSegment int64
-	_, err := fmt.Sscanf(before, "%08d", &firstBlockIdOfSegment)
+	// todo：strconv是不是可以 str -> int
+	_, err := fmt.Sscanf(blockIdStr, getBaseFormat(), &firstBlockIdOfSegment)
 	if err != nil {
 		return 0, false, err
 	}
-	return firstBlockIdOfSegment, found, nil
+	return firstBlockIdOfSegment, hasSuffix, nil
 }
 
 // buildBinary 日志数据 -> 格式化二进制数据
 // 存储在文件中的block结构：
-// | length 8字节 | length 8字节 | checksum 16字节 | payload x字节 |
+// | length 8字节 | blockid 8字节 | checksum 16字节 | payload x字节 |
 func buildBinary(blockId int64, data []byte) []byte {
 	length := int64(len(data))
 	// prof: 避免buf重分配
@@ -274,6 +284,7 @@ func loadBinary(raw []byte) ([]*bpos, []byte, int64, error) {
 	var start int64 = 0
 	// prof: 粗拍一个cap，避免小数据段导致的频繁重分配问题
 	bps := make([]*bpos, 0, consts.KB)
+	// todo：prof stat可以拿到文件大小
 	bbf := make([]byte, 0, consts.MB)
 	var lastBlockId int64
 	for {
@@ -307,6 +318,7 @@ func parseBinary(raw []byte) ([]byte, int64, int64, error) {
 	length, _ := binary.Varint(raw[:headerBlockIdOffset])
 	blockId, _ := binary.Varint(raw[headerBlockIdOffset:headerSummaryOffset])
 	checksum := raw[headerSummaryOffset:headerDataOffset]
+	// todo: 校验end < raw的长度
 	end := headerDataOffset + length
 	var dataAndLength []byte
 	dataAndLength = append(dataAndLength, raw[headerDataOffset:end]...)

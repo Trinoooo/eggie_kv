@@ -5,6 +5,8 @@ import (
 	"sync"
 )
 
+// todo: 抽成公用方法
+
 type Lru struct {
 	mu   sync.Mutex
 	list *list.List
@@ -14,7 +16,7 @@ type Lru struct {
 
 type item struct {
 	k, v interface{}
-	elem *list.Element
+	e    *list.Element
 }
 
 func newLru(size int) *Lru {
@@ -38,6 +40,7 @@ func (lru *Lru) read(key interface{}) interface{} {
 	return elem.Value.(*item).v
 }
 
+// todo：lock性能
 func (lru *Lru) write(key, data interface{}) interface{} {
 	lru.mu.Lock()
 	defer lru.mu.Unlock()
@@ -46,9 +49,9 @@ func (lru *Lru) write(key, data interface{}) interface{} {
 	if exist {
 		lru.list.MoveToFront(elem)
 		elem.Value = &item{
-			k:    key,
-			v:    data,
-			elem: elem,
+			k: key,
+			v: data,
+			e: elem,
 		}
 		return nil
 	}
@@ -58,7 +61,7 @@ func (lru *Lru) write(key, data interface{}) interface{} {
 		v: data,
 	}
 	e := lru.list.PushFront(newItem)
-	newItem.elem = e
+	newItem.e = e
 	lru.m[key] = e
 	if lru.list.Len() > lru.size {
 		item := lru.list.Remove(lru.list.Back()).(*item)
