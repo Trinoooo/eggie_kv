@@ -4,6 +4,7 @@ import (
 	"github.com/Trinoooo/eggie_kv/consts"
 	log "github.com/sirupsen/logrus"
 	"testing"
+	"time"
 )
 
 func TestMain(m *testing.M) {
@@ -11,6 +12,21 @@ func TestMain(m *testing.M) {
 		FullTimestamp: true,
 	})
 	m.Run()
+}
+
+func TestOptions(t *testing.T) {
+	opts := NewOptions().
+		SetDataPerm(0777).
+		SetDirPerm(0777).
+		SetSegmentCapacity(10 * consts.MB).
+		SetSegmentCacheSize(100).
+		SetNoSync().
+		SetSyncInterval(time.Second)
+
+	err := opts.check()
+	if err != nil {
+		t.Error(err)
+	}
 }
 
 // TestLog_Write
@@ -22,7 +38,7 @@ func TestLog_Write(t *testing.T) {
 		SetDirPerm(0770).
 		SetDataPerm(0660).
 		SetSegmentCacheSize(5).
-		SetSegmentSize(int64(segmentSize)).
+		SetSegmentCapacity(int64(segmentSize)).
 		SetNoSync()
 	wal, err := Open("../../../../test_data/wal/", opts)
 	if err != nil {
@@ -84,7 +100,7 @@ func TestLog_Read(t *testing.T) {
 func TestLog_Sync(t *testing.T) {
 	segmentSize := 100 * consts.MB
 	opts := NewOptions().
-		SetSegmentSize(int64(segmentSize))
+		SetSegmentCapacity(int64(segmentSize))
 	wal, err := Open("../../../../test_data/wal/", opts)
 	if err != nil {
 		t.Fatal(err)
@@ -288,7 +304,7 @@ func benchmarkInner(b *testing.B, data []byte) {
 		SetDirPerm(0770).
 		SetDataPerm(0660).
 		SetSegmentCacheSize(5).
-		SetSegmentSize(int64(segmentSize))
+		SetSegmentCapacity(int64(segmentSize))
 	wal, err := Open("../../../../test_data/wal/", opts)
 	if err != nil {
 		b.Fatal(err)

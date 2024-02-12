@@ -1,5 +1,18 @@
 # eggie_kv
 
+<div>
+<img 
+    src="https://img.shields.io/github/license/Trinoooo/eggie_kv" 
+    alt="license"
+>
+<a href="https://pkg.go.dev/github.com/Trinoooo/eggie_kv">
+<img 
+    src="https://img.shields.io/badge/reference-reference?logo=go&labelColor=gray&color=blue&link=https%3A%2F%2Fpkg.go.dev%2Fgithub.com%2FTrinoooo%2Feggie_kv" 
+    alt="reference"
+>
+</a>
+</div>
+
 ## 模块间关系图
 ```text
 .

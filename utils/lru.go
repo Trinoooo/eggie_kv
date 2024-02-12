@@ -1,11 +1,9 @@
-package wal
+package utils
 
 import (
 	"container/list"
 	"sync"
 )
-
-// todo: 抽成公用方法
 
 type Lru struct {
 	mu   sync.Mutex
@@ -19,7 +17,7 @@ type item struct {
 	e    *list.Element
 }
 
-func newLru(size int) *Lru {
+func NewLRU(size int) *Lru {
 	return &Lru{
 		list: list.New(),
 		size: size,
@@ -27,7 +25,7 @@ func newLru(size int) *Lru {
 	}
 }
 
-func (lru *Lru) read(key interface{}) interface{} {
+func (lru *Lru) Read(key interface{}) interface{} {
 	lru.mu.Lock()
 	defer lru.mu.Unlock()
 
@@ -41,7 +39,7 @@ func (lru *Lru) read(key interface{}) interface{} {
 }
 
 // todo：lock性能
-func (lru *Lru) write(key, data interface{}) interface{} {
+func (lru *Lru) Write(key, data interface{}) interface{} {
 	lru.mu.Lock()
 	defer lru.mu.Unlock()
 
@@ -71,7 +69,7 @@ func (lru *Lru) write(key, data interface{}) interface{} {
 	return nil
 }
 
-func (lru *Lru) remove(key interface{}) interface{} {
+func (lru *Lru) Remove(key interface{}) interface{} {
 	lru.mu.Lock()
 	defer lru.mu.Unlock()
 
@@ -80,6 +78,24 @@ func (lru *Lru) remove(key interface{}) interface{} {
 		delete(lru.m, key)
 		lru.list.Remove(elem)
 		return elem.Value.(*item).v
+	}
+
+	return nil
+}
+
+// Traverse 遍历lru中的存储元素，对每个元素执行do方法
+// 如果执行do方法过程中出现错误，Traverse 会根据 skipErr
+// 决定是否忽略错误，即当 skipErr 为true时，Traverse 不会返回错误
+// 当 skipErr 为false时，Traverse 会返回第一个出现的错误
+func (lru *Lru) Traverse(do func(item interface{}) error, skipErr bool) error {
+	lru.mu.Lock()
+	defer lru.mu.Unlock()
+
+	for _, e := range lru.m {
+		err := do(e.Value.(*item).v)
+		if !skipErr && err != nil {
+			return err
+		}
 	}
 
 	return nil
