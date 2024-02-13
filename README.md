@@ -11,6 +11,15 @@
     alt="reference"
 >
 </a>
+<a href="https://github.com/Trinoooo/eggie_kv/actions/workflows/test.yaml">
+<img 
+    src="https://github.com/Trinoooo/eggie_kv/actions/workflows/test.yaml/badge.svg" 
+    alt="go test"
+>
+</a>
+<a href="https://codecov.io/gh/Trinoooo/eggie_kv" > 
+ <img src="https://codecov.io/gh/Trinoooo/eggie_kv/graph/badge.svg?token=A86TGA8XOE" alt="codecov"/> 
+</a>
 </div>
 
 ## 模块间关系图

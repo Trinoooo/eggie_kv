@@ -19,7 +19,7 @@ TestCoverageFile=$(TestPackage)/c.out
 TestCoverageHtml=$(TestPackage)/coverage.html
 test-with-cover:
 	EGGIE_KV_ENV='test' go test $(TestPackage) -v -coverprofile=$(TestCoverageFile) -count=1 && \
-	go tool cover -html=$(TestCoverageFile) -o=$(TestCoverageHtml) && \
+	go tool cover -html=. -o=$(TestCoverageHtml) && \
 	rm -f $(TestCoverageFile)
 
 BenchmarkPackage := $(benchmark_package)
