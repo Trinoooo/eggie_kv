@@ -20,3 +20,9 @@ jobs:
 
       - name: Run tests
         run: make -f makefile test-with-cover TestPackage=./storage/core/ragdoll/wal
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v4.0.1
+        env:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: Trinoooo/eggie_kv
