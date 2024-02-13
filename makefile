@@ -15,10 +15,8 @@ build-all: build-storage build-cli
 
 # 测试
 TestPackage := $(test_package)
-TestCoverageFile=$(TestPackage)/c.out
-TestCoverageHtml=$(TestPackage)/coverage.html
 test-with-cover:
-	EGGIE_KV_ENV='test' go test $(TestPackage) -v -coverprofile=. -count=1
+	EGGIE_KV_ENV='test' go test $(TestPackage) -v -coverprofile=./c.out -count=1
 
 BenchmarkPackage := $(benchmark_package)
 BenchmarkTarget := $(benchmark_target)
