@@ -43,19 +43,21 @@ type position struct {
 
 // TODO: 补充corrupt处理
 type segment struct {
-	fd            *os.File // fd segment 文件描述符
-	path          string   // path segment 文件路径
-	firstBlockIdx *int64   // firstBlockIdx segment 中的起始 blockIdx
-	lastBlockIdx  *int64   // lastBlockIdx segment 中最后的 blockIdx
-	// blockBuffer segment 中存储的数据内容
+	fd   *os.File // fd segment 文件描述符
+	path string   // path segment 文件路径
+	// startBlockIdx segment 中的起始 blockIdx，和 firstBlockIdx 的区别是前者指代 segment 文件的起始边界
+	// 边界存在不意味着第一条记录存在，后者指代 segment 文件中第一个block的blockIdx
+	startBlockIdx *int64
+	firstBlockIdx int64 // firstBlockIdx segment 中的起始 blockIdx
+	lastBlockIdx  int64 // lastBlockIdx segment 中最后的 blockIdx
+	// bbuf segment 中存储的数据内容
 	// segment 存储的最大容量取决于外部，存储结构如下：
 	// | block #1 | block #2 | 0000 |
 	// 当文件剩余容量不足以再写下一个完整 block 时
 	// 文件末尾剩余内容不再使用，保证文件开头是一个完整的 block
-	blockBuffer []byte
-	// blockPosition 指示 blockBuffer 中每个block的位置
-	blockPosition      []*position
-	blockBufferSyncIdx int64 // blockBufferSyncIdx 下一个要刷盘的 blockBuffer 偏移量
+	bbuf        []byte
+	bpos        []*position // bpos 指示 bbuf 中每个block的位置
+	bbufSyncIdx int64       // bbufSyncIdx 下一个要刷盘的 bbuf 偏移量
 
 	maxSize   int64 // maxSize segment 文件最大体积
 	hasSuffix bool  // hasSuffix segment 文件路径中是否包含.active后缀
@@ -65,6 +67,8 @@ func newSegment(path string, maxSize int64) *segment {
 	seg := &segment{}
 	seg.path = path
 	seg.maxSize = maxSize
+	seg.firstBlockIdx = -1
+	seg.lastBlockIdx = -1
 	return seg
 }
 
@@ -94,46 +98,29 @@ func (seg *segment) open(perm os.FileMode) error {
 		return err
 	}
 
-	seg.blockBuffer = bbf
-	seg.blockPosition = bps
-	lengthOfBlockPosition := int64(len(seg.blockPosition))
-	seg.blockBufferSyncIdx = seg.blockPosition[lengthOfBlockPosition-1].end + 1
+	seg.bbuf = bbf
+	seg.bpos = bps
+	lengthOfBpos := int64(len(seg.bpos))
+	seg.bbufSyncIdx = int64(len(seg.bbuf))
 	startBlockIdx, hasSuffix, err := baseToBlockId(filepath.Base(seg.path))
 	if err != nil {
 		return err
 	}
-	seg.firstBlockIdx = &startBlockIdx
-	if lengthOfBlockPosition > 0 {
-		seg.lastBlockIdx = utils.Int64Ptr(*seg.firstBlockIdx + lengthOfBlockPosition - 1)
+	seg.startBlockIdx = &startBlockIdx
+	if lengthOfBpos > 0 {
+		seg.firstBlockIdx = startBlockIdx
+		seg.lastBlockIdx = seg.firstBlockIdx + lengthOfBpos - 1
 	}
 	seg.hasSuffix = hasSuffix
 	return nil
 }
 
-// getFirstBlockIdx 获取 segment 中第一个block的blockIdx
-// 需要外部保证线程安全
-func (seg *segment) getFirstBlockIdx() int64 {
-	// note：使用指针类型 (*int) 和使用一个特殊的非法值都可以表示一个 int 值是否被赋过值的状态
-	// chatgpt更倾向于前者
-	// “根据你的描述和需求，我更倾向于推荐使用指针类型 *int 的方式来表示一个 int 值是否被赋过值。
-	// 使用指针类型可以明确地表达该值是否被赋过值，而且它不需要引入额外的字段或特殊的非法值。
-	// 只需要通过判断指针是否为 nil 即可得知是否有给其赋过值。
-	// 这种方式也比较常见，易于理解和维护。它符合 Go 语言中的惯用方式，能够在代码中清晰地表示该字段的状态。”
-	if seg.firstBlockIdx != nil {
-		return *seg.firstBlockIdx
+func (seg *segment) getStartBlockIdx() int64 {
+	if seg.startBlockIdx != nil {
+		return *seg.startBlockIdx
 	}
-
 	blockId, _, _ := baseToBlockId(filepath.Base(seg.path))
 	return blockId
-}
-
-// getLastBlockIdx 获取 segment 中最后一个block的blockIdx
-// 需要外部保证线程安全
-func (seg *segment) getLastBlockIdx() int64 {
-	if seg.lastBlockIdx == nil {
-		return 0
-	}
-	return *seg.lastBlockIdx
 }
 
 // close 关闭 segment 文件
@@ -152,8 +139,8 @@ func (seg *segment) close() error {
 	}
 
 	// note：避免内存泄漏
-	seg.blockBuffer = nil
-	seg.blockPosition = nil
+	seg.bbuf = nil
+	seg.bpos = nil
 	return nil
 }
 
@@ -161,20 +148,22 @@ func (seg *segment) close() error {
 // 需要外部保证线程安全
 func (seg *segment) write(data []byte) error {
 	lengthOfBlock := int64(len(data) + headerSize)
-	lengthOfBuffer := int64(len(seg.blockBuffer))
-	if lengthOfBlock+lengthOfBuffer > seg.maxSize {
+	lengthOfBbuf := int64(len(seg.bbuf))
+	if lengthOfBlock+lengthOfBbuf > seg.maxSize {
+		// note: 这里不打日志是因为可能是稳态错误，在外层判断再打日志
 		return consts.NewSegmentFullErr()
 	}
-	nextBlockIdx := seg.getLastBlockIdx() + 1
+	nextBlockIdx := seg.lastBlockIdx + 1
 	if nextBlockIdx >= getMaxBlockCapacityInWAL() {
+		// note: 这里不打日志是因为可能是稳态错误，在外层判断再打日志
 		return consts.NewReachBlockIdxLimitErr()
 	}
-	seg.blockPosition = append(seg.blockPosition, &position{
-		start: lengthOfBuffer,
-		end:   lengthOfBuffer + lengthOfBlock,
+	seg.bpos = append(seg.bpos, &position{
+		start: lengthOfBbuf,
+		end:   lengthOfBbuf + lengthOfBlock,
 	})
-	seg.blockBuffer = append(seg.blockBuffer, buildBinary(nextBlockIdx, data)...)
-	seg.lastBlockIdx = &nextBlockIdx
+	seg.bbuf = append(seg.bbuf, buildBinary(nextBlockIdx, data)...)
+	seg.lastBlockIdx = nextBlockIdx
 	return nil
 }
 
@@ -182,7 +171,7 @@ func (seg *segment) write(data []byte) error {
 // 需要外部保证线程安全
 func (seg *segment) sync() error {
 	var written int64
-	lenToWrite := int64(len(seg.blockBuffer)) - seg.blockBufferSyncIdx
+	lenToWrite := int64(len(seg.bbuf)) - seg.bbufSyncIdx
 	// fast-through
 	if lenToWrite == 0 {
 		return nil
@@ -192,6 +181,14 @@ func (seg *segment) sync() error {
 	tempFile, err := os.CreateTemp(dir, base)
 	if err != nil {
 		e := consts.NewCreateTempFileErr().WithErr(err)
+		logs.Error(e.Error())
+		return e
+	}
+
+	// bugfix: 不调整文件偏移量在 io.Copy 时会有问题
+	_, err = seg.fd.Seek(0, io.SeekStart)
+	if err != nil {
+		e := consts.NewSeekFileErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
@@ -207,7 +204,7 @@ func (seg *segment) sync() error {
 		if written == lenToWrite {
 			break
 		}
-		n, err := tempFile.Write(seg.blockBuffer[seg.blockBufferSyncIdx:])
+		n, err := tempFile.Write(seg.bbuf[seg.bbufSyncIdx+written:])
 		if err != nil {
 			e := consts.NewWriteFileErr().WithErr(err)
 			logs.Error(e.Error())
@@ -217,7 +214,7 @@ func (seg *segment) sync() error {
 		written += int64(n)
 	}
 
-	seg.blockBufferSyncIdx = int64(len(seg.blockBuffer))
+	seg.bbufSyncIdx = int64(len(seg.bbuf))
 	err = tempFile.Sync()
 	if err != nil {
 		e := consts.NewSyncFileErr().WithErr(err)
@@ -239,7 +236,7 @@ func (seg *segment) sync() error {
 		return e
 	}
 
-	err = os.Rename(filepath.Join(dir, tempFile.Name()), seg.path)
+	err = os.Rename(tempFile.Name(), seg.path)
 	if err != nil {
 		e := consts.NewRenameFileErr().WithErr(err)
 		logs.Error(e.Error())
@@ -253,18 +250,22 @@ func (seg *segment) sync() error {
 // read 读取
 // 需要外部保证线程安全
 func (seg *segment) read(idx int64) ([]byte, error) {
-	lengthOfBlockPosition := len(seg.blockPosition)
-	targetIdx := sort.Search(lengthOfBlockPosition, func(i int) bool {
-		return int64(i) >= idx
+	lengthOfBpos := len(seg.bpos)
+	offset := idx - seg.firstBlockIdx
+	targetIdx := sort.Search(lengthOfBpos, func(i int) bool {
+		return int64(i) >= offset
 	})
 
-	if targetIdx < lengthOfBlockPosition && int64(targetIdx) == idx {
+	if targetIdx < lengthOfBpos && int64(targetIdx) == offset {
 		// bugfix: 读到的内容没有去掉header
-		pos := seg.blockPosition[targetIdx]
-		return seg.blockBuffer[pos.start+headerSize : pos.end], nil
+		pos := seg.bpos[targetIdx]
+		return seg.bbuf[pos.start+headerSize : pos.end], nil
 	}
 
-	e := consts.NewNotFoundErr()
+	e := consts.NewNotFoundErr().WithField(map[consts.FieldName]interface{}{
+		consts.Params: "idx,offset",
+		consts.Value:  []interface{}{idx, offset},
+	})
 	logs.Error(e.Error())
 	return nil, e
 }
@@ -275,18 +276,28 @@ func (seg *segment) read(idx int64) ([]byte, error) {
 // 需要外部保证线程安全
 func (seg *segment) truncate(idx int64) (bool, error) {
 	var empty bool
-	firstBlockIdxAfterTruncate := (idx + 1) % seg.getFirstBlockIdx()
-	if idx < seg.getFirstBlockIdx() || firstBlockIdxAfterTruncate > seg.getLastBlockIdx() {
-		seg.firstBlockIdx = utils.Int64Ptr(0)
-		seg.blockPosition = make([]*position, 0, consts.KB)
-		seg.blockBuffer = make([]byte, 0, seg.maxSize)
-		seg.blockBufferSyncIdx = 0
+	if idx < seg.firstBlockIdx || idx > seg.lastBlockIdx {
+		seg.bpos = make([]*position, 0, consts.KB)
+		seg.bbuf = make([]byte, 0, seg.maxSize)
+		seg.bbufSyncIdx = 0
 		empty = true
 	} else {
-		seg.firstBlockIdx = utils.Int64Ptr(firstBlockIdxAfterTruncate)
-		seg.blockPosition = seg.blockPosition[firstBlockIdxAfterTruncate:]
-		seg.blockBuffer = seg.blockBuffer[seg.blockPosition[0].start:] // 前面的判断保证这里取seg.blockPosition[0]不会有问题
-		seg.blockBufferSyncIdx = int64(len(seg.blockBuffer))
+		firstBlockIdxAfterTruncate := (idx + 1) - seg.getStartBlockIdx()
+		seg.firstBlockIdx = idx
+		seg.bpos = seg.bpos[firstBlockIdxAfterTruncate:]
+		firstByteAfterTruncate := seg.bpos[0].start
+		seg.bbuf = seg.bbuf[firstByteAfterTruncate:] // 前面的判断保证这里取seg.bpos[0]不会有问题
+		// 下面会完全截断，所以从0开始同步buf内容
+		seg.bbufSyncIdx = 0
+		// 由于segment文件由起始blockId命名，因此需要重命名
+		oldPath := seg.path
+		seg.path = filepath.Join(filepath.Dir(seg.path), blockIdToBase(seg.firstBlockIdx, seg.hasSuffix))
+		err := os.Rename(oldPath, seg.path)
+		if err != nil {
+			e := consts.NewRenameFileErr().WithErr(err)
+			logs.Error(e.Error())
+			return false, e
+		}
 	}
 
 	// 清空文件内容
@@ -297,20 +308,9 @@ func (seg *segment) truncate(idx int64) (bool, error) {
 		return false, e
 	}
 
-	// 将截断后的内容刷盘到文件中
 	err = seg.sync()
 	if err != nil {
 		return false, err
-	}
-
-	// 由于segment文件由起始blockId命名，因此需要重命名
-	oldPath := seg.path
-	seg.path = filepath.Join(filepath.Dir(seg.path), blockIdToBase(seg.getFirstBlockIdx(), seg.hasSuffix))
-	err = os.Rename(oldPath, seg.path)
-	if err != nil {
-		e := consts.NewRenameFileErr().WithErr(err)
-		logs.Error(e.Error())
-		return false, e
 	}
 
 	return empty, nil
@@ -334,6 +334,17 @@ func (seg *segment) rename() error {
 	}
 
 	return nil
+}
+
+func (seg *segment) size() (int64, error) {
+	stat, err := os.Stat(seg.path)
+	if err != nil {
+		e := consts.NewFileStatErr().WithErr(err)
+		logs.Error(e.Error())
+		return 0, e
+	}
+
+	return stat.Size(), nil
 }
 
 // blockIdToBase 起始blockIdx转文件名

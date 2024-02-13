@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"github.com/Trinoooo/eggie_kv/consts"
+	"github.com/Trinoooo/eggie_kv/storage/core/ragdoll/logs"
 	"github.com/Trinoooo/eggie_kv/storage/server"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
@@ -27,7 +28,12 @@ var (
 		Usage:   "server port number, 0 < port < 65535 are available.",
 		Action: func(c *cli.Context, port int64) error {
 			if port <= 0 || port > 65535 {
-				return consts.InvalidParamErr
+				e := consts.NewInvalidParamErr().WithField(map[consts.FieldName]interface{}{
+					consts.Params: "port",
+					consts.Value:  port,
+				})
+				logs.Error(e.Error())
+				return e
 			}
 			return nil
 		},
@@ -40,7 +46,12 @@ var (
 		Usage:   "max size per segment file, 0 < size <= 1GB are available.",
 		Action: func(context *cli.Context, size int64) error {
 			if size < 0 || size > consts.GB {
-				return consts.InvalidParamErr
+				e := consts.NewInvalidParamErr().WithField(map[consts.FieldName]interface{}{
+					consts.Params: "size",
+					consts.Value:  size,
+				})
+				logs.Error(e.Error())
+				return e
 			}
 			return nil
 		},
@@ -53,7 +64,12 @@ var (
 		Usage:   "max connection number, 0 < number <= 4000 are available.",
 		Action: func(context *cli.Context, number int64) error {
 			if number < 0 || number > 4000 {
-				return consts.InvalidParamErr
+				e := consts.NewInvalidParamErr().WithField(map[consts.FieldName]interface{}{
+					consts.Params: "number",
+					consts.Value:  number,
+				})
+				logs.Error(e.Error())
+				return e
 			}
 			return nil
 		},
