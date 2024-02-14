@@ -30,8 +30,7 @@ func TestOptions(t *testing.T) {
 }
 
 // TestLog_Write
-// * 测试写入与从文件中恢复（日志文件夹下存在数据文件）
-// * opt采用自定义
+// * 写入3e7条数据，每条数据100字节大小
 func TestLog_Write(t *testing.T) {
 	segmentSize := 100 * consts.MB
 	opts := NewOptions().
@@ -61,9 +60,10 @@ func TestLog_Write(t *testing.T) {
 	}
 }
 
-// TestLog_Read
-// * 测试读日志
-// * opt用默认的
+// TestLog_Read 测试读日志
+// * 重复读同一个segment
+// * lru
+// * 读activeSegment
 func TestLog_Read(t *testing.T) {
 	wal, err := Open("../../../../test_data/wal/", nil)
 	if err != nil {
@@ -87,6 +87,38 @@ func TestLog_Read(t *testing.T) {
 		}
 
 		t.Log(data)
+	}
+
+	err = wal.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLog_MRead 批量读日志
+func TestLog_MRead(t *testing.T) {
+	wal, err := Open("../../../../test_data/wal/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	readIdxList := []int64{
+		3000000,
+		3000000,
+		6000000,
+		7000000,
+		9000000,
+		12000000,
+		29400000,
+	}
+
+	for _, idx := range readIdxList {
+		data, err := wal.MRead(idx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		t.Log(len(data))
 	}
 
 	err = wal.Close()

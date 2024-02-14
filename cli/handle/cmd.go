@@ -34,7 +34,7 @@ func (c *ClientWrapper) HandleInput(input string) {
 	case "set":
 		c.Set(args)
 	default:
-		log.Println("error occur when parse form input, err: Unspported command type ", cmd)
+		log.Println("error occur when parse form input, errs: Unspported command type ", cmd)
 		return
 	}
 }
@@ -76,33 +76,33 @@ func (c *ClientWrapper) Set(args []string) {
 func (c *ClientWrapper) cmdPost(kvReq *consts.KvRequest) (*consts.KvResponse, bool) {
 	reqBytes, err := json.Marshal(kvReq)
 	if err != nil {
-		log.Println("error occur when marshal req, err: ", err)
+		log.Println("error occur when marshal req, errs: ", err)
 		return nil, false
 	}
 
 	req, err := http.NewRequestWithContext(*c.Ctx, http.MethodPost, c.Url.String(), bytes.NewBuffer(reqBytes))
 	if err != nil {
-		log.Println("error occur when build http post, err", err)
+		log.Println("error occur when build http post, errs", err)
 		return nil, false
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.Http.Do(req)
 	if err != nil {
-		log.Println("error occur when http post, err: ", err)
+		log.Println("error occur when http post, errs: ", err)
 		return nil, false
 	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Println("error occur when read resp body bytes, err: ", err)
+		log.Println("error occur when read resp body bytes, errs: ", err)
 		return nil, false
 	}
 
 	kvResp := &consts.KvResponse{}
 	err = json.Unmarshal(bodyBytes, kvResp)
 	if err != nil {
-		log.Println("error occur when unmarshal resp, err: ", err)
+		log.Println("error occur when unmarshal resp, errs: ", err)
 		return nil, false
 	}
 

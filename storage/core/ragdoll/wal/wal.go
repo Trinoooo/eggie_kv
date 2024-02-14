@@ -3,8 +3,10 @@ package wal
 import (
 	"errors"
 	"github.com/Trinoooo/eggie_kv/consts"
+	"github.com/Trinoooo/eggie_kv/errs"
 	"github.com/Trinoooo/eggie_kv/storage/core/ragdoll/logs"
 	"github.com/Trinoooo/eggie_kv/utils"
+	"go.uber.org/zap"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -148,48 +150,33 @@ func (opts *Options) SetSyncInterval(syncInterval time.Duration) *Options {
 func (opts *Options) check() error {
 	// note：暂时不考虑特殊权限位
 	if opts.dataPerm <= 0 || opts.dataPerm > 0777 {
-		e := consts.NewInvalidParamErr().WithField(map[consts.FieldName]interface{}{
-			consts.Params: "opts.dataPerm",
-			consts.Value:  opts.dataPerm,
-		})
-		logs.Error(e.Error())
+		e := errs.NewInvalidParamErr()
+		logs.Error(e.Error(), zap.String(consts.Params, "opts.dataPerm"), zap.Uint32(consts.Value, uint32(opts.dataPerm)))
 		return e
 	}
 
 	if opts.dirPerm <= 0 || opts.dirPerm > 0777 {
-		e := consts.NewInvalidParamErr().WithField(map[consts.FieldName]interface{}{
-			consts.Params: "opts.dirPerm",
-			consts.Value:  opts.dirPerm,
-		})
-		logs.Error(e.Error())
+		e := errs.NewInvalidParamErr()
+		logs.Error(e.Error(), zap.String(consts.Params, "opts.dirPerm"), zap.Uint32(consts.Value, uint32(opts.dirPerm)))
 		return e
 	}
 
 	if opts.segmentCacheCapacity < 0 {
-		e := consts.NewInvalidParamErr().WithField(map[consts.FieldName]interface{}{
-			consts.Params: "opts.segmentCacheCapacity",
-			consts.Value:  opts.segmentCacheCapacity,
-		})
-		logs.Error(e.Error())
+		e := errs.NewInvalidParamErr()
+		logs.Error(e.Error(), zap.String(consts.Params, "opts.segmentCacheCapacity"), zap.Int(consts.Value, opts.segmentCacheCapacity))
 		return e
 	}
 
 	// 这个范围主要是出于性能考虑，segment文件太小会导致频繁开关文件，segment文件太大会有性能问题（占内存过大，频繁缺页等）
 	if opts.segmentCapacity < consts.MB || opts.segmentCapacity > consts.GB {
-		e := consts.NewInvalidParamErr().WithField(map[consts.FieldName]interface{}{
-			consts.Params: "opts.segmentCapacity",
-			consts.Value:  opts.segmentCapacity,
-		})
-		logs.Error(e.Error())
+		e := errs.NewInvalidParamErr()
+		logs.Error(e.Error(), zap.String(consts.Params, "opts.segmentCapacity"), zap.Int64(consts.Value, opts.segmentCapacity))
 		return e
 	}
 
 	if opts.syncInterval < 0 {
-		e := consts.NewInvalidParamErr().WithField(map[consts.FieldName]interface{}{
-			consts.Params: "opts.syncInterval",
-			consts.Value:  opts.syncInterval,
-		})
-		logs.Error(e.Error())
+		e := errs.NewInvalidParamErr()
+		logs.Error(e.Error(), zap.String(consts.Params, "opts.syncInterval"), zap.Duration(consts.Value, opts.syncInterval))
 		return e
 	}
 	return nil
@@ -237,7 +224,7 @@ type Log struct {
 //
 // 返回值：
 // - wal日志（*Log）
-// - err 过程中出现的错误，类型是 *consts.KvErr
+// - errs 过程中出现的错误，类型是 *consts.KvErr
 func Open(dirPath string, opts *Options) (_ *Log, err error) {
 	if opts == nil {
 		opts = NewOptions()
@@ -309,29 +296,26 @@ func (wal *Log) checkOrInitDir() error {
 	stat, err := os.Stat(wal.dirPath)
 	if errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(wal.dirPath, wal.opts.dirPerm); err != nil {
-			e := consts.NewMkdirErr().WithErr(err)
+			e := errs.NewMkdirErr().WithErr(err)
 			logs.Error(e.Error())
 			return e
 		}
 
 		stat, err = os.Stat(wal.dirPath)
 		if err != nil {
-			e := consts.NewFileStatErr().WithErr(err)
+			e := errs.NewFileStatErr().WithErr(err)
 			logs.Error(e.Error())
 			return e
 		}
 	} else if err != nil {
-		e := consts.NewFileStatErr().WithErr(err)
+		e := errs.NewFileStatErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
 
 	if !stat.IsDir() {
-		e := consts.NewInvalidParamErr().WithField(map[consts.FieldName]interface{}{
-			consts.Params: "stat",
-			consts.Value:  stat,
-		})
-		logs.Error(e.Error())
+		e := errs.NewInvalidParamErr()
+		logs.Error(e.Error(), zap.String(consts.Params, "stat"), zap.Any(consts.Value, stat))
 		return e
 	}
 
@@ -342,14 +326,14 @@ func (wal *Log) checkOrInitDir() error {
 func (wal *Log) lockDir() error {
 	file, err := utils.CheckAndCreateFile(filepath.Join(wal.dirPath, dirLock), os.O_CREATE|os.O_RDWR, 0770)
 	if err != nil {
-		e := consts.NewOpenFileErr().WithErr(err)
+		e := errs.NewOpenFileErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
 
 	err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
-		e := consts.NewFlockFileErr().WithErr(err)
+		e := errs.NewFlockFileErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
@@ -411,7 +395,7 @@ func (wal *Log) loadSegments() error {
 		}
 		return nil
 	}); err != nil {
-		e := consts.NewWalkDirErr().WithErr(err)
+		e := errs.NewWalkDirErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
@@ -426,7 +410,7 @@ func (wal *Log) loadSegments() error {
 	err = activeSegment.open(wal.opts.dataPerm)
 	if err != nil {
 		// todo：调研 损坏恢复
-		if errors.Is(err, consts.NewCorruptErr()) {
+		if errors.Is(err, errs.NewCorruptErr()) {
 			wal.corrupted = true
 		}
 		return err
@@ -488,7 +472,7 @@ func (wal *Log) periodicSync() {
 				wal.mu.Lock()
 				wal.bgfailed = true
 				wal.mu.Unlock()
-				e := consts.NewBackgroundErr().WithErr(err)
+				e := errs.NewBackgroundErr().WithErr(err)
 				logs.Error(e.Error())
 				return
 			}
@@ -501,7 +485,7 @@ func (wal *Log) periodicSync() {
 // 如果在wal已经关闭后调用会返回 consts.NewFileClosedErr
 //
 // 返回值：
-// - err 过程中出现的错误，类型是 *consts.KvErr
+// - errs 过程中出现的错误，类型是 *consts.KvErr
 func (wal *Log) Close() error {
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
@@ -541,7 +525,7 @@ func (wal *Log) Close() error {
 	// 关闭目录锁文件，释放文件锁
 	err = syscall.Flock(int(wal.dirLockFile.Fd()), syscall.LOCK_UN)
 	if err != nil {
-		e := consts.NewFlockFileErr().WithErr(err)
+		e := errs.NewFlockFileErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
@@ -574,7 +558,7 @@ func (wal *Log) Close() error {
 //
 // 返回值：
 // - blockIdx 写入成功后会返回写入日志在wal中的blockIdx，该值用于 Read、 MRead 和 Truncate
-// - err 过程中出现的错误，类型是 *consts.KvErr
+// - errs 过程中出现的错误，类型是 *consts.KvErr
 func (wal *Log) Write(data []byte) (int64, error) {
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
@@ -593,7 +577,7 @@ func (wal *Log) Write(data []byte) (int64, error) {
 	// 需要考虑lastBlockIdx追上firstBlockIdx的情况
 	nextBlockIdx := (wal.lastBlockIdx + 1) % getMaxBlockCapacityInWAL()
 	if nextBlockIdx == wal.firstBlockIdx {
-		e := consts.NewWalFullErr()
+		e := errs.NewWalFullErr()
 		logs.Error(e.Error())
 		return 0, e
 	}
@@ -603,7 +587,7 @@ func (wal *Log) Write(data []byte) (int64, error) {
 	if err != nil {
 		// 1. 如果当前segment满了，那么新开一个segment
 		// 2. 如果写segment时发现segment内部blockIdx已经触达blockCapacity上限，那么blockIdx从零开始计数新开一个segment
-		if consts.GetCode(err) == consts.SegmentFullErrCode || consts.GetCode(err) == consts.ReachBlockIdxLimitErrCode {
+		if errs.GetCode(err) == errs.SegmentFullErrCode || errs.GetCode(err) == errs.ReachBlockIdxLimitErrCode {
 			err := wal.activeSegment.close()
 			if err != nil {
 				return 0, err
@@ -661,7 +645,7 @@ func (wal *Log) Write(data []byte) (int64, error) {
 //
 // 返回值：
 // - data idx对应的日志数据内容，类型是字节数组
-// - err 过程中出现的错误，类型是 *consts.KvErr
+// - errs 过程中出现的错误，类型是 *consts.KvErr
 func (wal *Log) Read(idx int64) ([]byte, error) {
 	blocks, err := wal.read(idx, idx)
 	if err != nil {
@@ -682,7 +666,7 @@ func (wal *Log) Read(idx int64) ([]byte, error) {
 //
 // 返回值：
 // - datas 查询到的日志数据列表
-// - err 过程中出现的错误，类型是 *consts.KvErr
+// - errs 过程中出现的错误，类型是 *consts.KvErr
 func (wal *Log) MRead(idx int64) ([][]byte, error) {
 	return wal.read(wal.firstBlockIdx, (wal.firstBlockIdx+idx)%getMaxBlockCapacityInWAL())
 }
@@ -759,7 +743,7 @@ func (wal *Log) getBlockIdxListByRange(startBlockIdx, endBlockIdx int64) []int64
 // 如果在wal后台协程执行失败的情况下尝试同步，会返回 consts.NewBackgroundErr 错误
 //
 // 返回值：
-// - err 过程中出现的错误，类型是 *consts.KvErr
+// - errs 过程中出现的错误，类型是 *consts.KvErr
 func (wal *Log) Sync() error {
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
@@ -782,12 +766,12 @@ func (wal *Log) Sync() error {
 // - idx 指定截断 [firstBlockIdx, idx] 范围内的日志记录
 //
 // 返回值：
-// - err 过程中出现的错误，类型是 *consts.KvErr
+// - errs 过程中出现的错误，类型是 *consts.KvErr
 //
 // example1：
 //
 //	for i := 0; i < 100; i++ {
-//			_, err := wal.Write([]byte{1, 2, 3})
+//			_, errs := wal.Write([]byte{1, 2, 3})
 //	} // 循环执行完成后，wal中 firstBlockIdx 为0，blockId的范围是[0, 100]
 //
 //	/* 截断 [0, 50) 范围内的block，此时wal中维护的block范围是[50, 100]
@@ -798,7 +782,7 @@ func (wal *Log) Sync() error {
 //
 //	// 继续上面的例子，假设wal能够容纳的最大block数量是100，那么我们继续向wal中写的日志blockId会从0开始循环
 //	for i := 0; i < 20; i++ {
-//			_, err := wal.Write([]byte{1, 2, 3})
+//			_, errs := wal.Write([]byte{1, 2, 3})
 //	} // 循环执行完成后，wal中 firstBlockIdx 为50，blockId的范围是[0, 20] & [50, 100]
 //
 //	/* 截断 [0, 10) & [50, 100]范围内的block，此时wal中维护的block范围是[10, 20]
@@ -849,7 +833,7 @@ func (wal *Log) Truncate(idx int64) error {
 
 				err = os.Remove(seg.path)
 				if err != nil {
-					e := consts.NewRemoveFileErr()
+					e := errs.NewRemoveFileErr()
 					logs.Error(e.Error())
 					return e
 				}
@@ -883,7 +867,7 @@ func (wal *Log) findSegment(idx int64) *segment {
 	// note: 二分搜索要求序列有序
 	wal.sortSegments()
 	target := sort.Search(len(wal.segments), func(i int) bool {
-		return wal.segments[i].getStartBlockIdx() >= idx
+		return wal.segments[i].getStartBlockIdx() > idx
 	})
 
 	if target != 0 {
@@ -909,15 +893,15 @@ func (wal *Log) sortSegments() {
 // 根据传入的参数动态决定那些状态检查那些状态不检查
 func (wal *Log) checkState(closed, corrupted, bgfailed bool) error {
 	if closed && wal.closed {
-		e := consts.NewFileClosedErr()
+		e := errs.NewFileClosedErr()
 		logs.Error(e.Error())
 		return e
 	} else if corrupted && wal.corrupted {
-		e := consts.NewCorruptErr()
+		e := errs.NewCorruptErr()
 		logs.Error(e.Error())
 		return e
 	} else if bgfailed && wal.bgfailed {
-		e := consts.NewBackgroundErr()
+		e := errs.NewBackgroundErr()
 		logs.Error(e.Error())
 		return e
 	}
@@ -931,22 +915,16 @@ func (wal *Log) checkRange(idxs ...int64) error {
 		// 正常情况，lastBlockIdx 比 firstBlockIdx 大
 		// 认为idx比 firstBlockIdx 小或者idx比 lastBlockIdx 时参数非法
 		if wal.firstBlockIdx <= wal.lastBlockIdx && (idx < wal.firstBlockIdx || idx > wal.lastBlockIdx) {
-			e := consts.NewInvalidParamErr().WithField(map[consts.FieldName]interface{}{
-				consts.Params: "idxs",
-				consts.Value:  idxs,
-			})
-			logs.Error(e.Error())
+			e := errs.NewInvalidParamErr()
+			logs.Error(e.Error(), zap.String(consts.Params, "idxs"), zap.Int64s(consts.Value, idxs))
 			return e
 		}
 
 		// 当日志开始循环，可能出现 lastBlockIdx 比 firstBlockIdx 小的情况
 		// 此时认为idx在 lastBlockIdx 与 firstBlockIdx 之间为非法情况
 		if wal.firstBlockIdx > wal.lastBlockIdx && (wal.lastBlockIdx < idx && idx < wal.firstBlockIdx) {
-			e := consts.NewInvalidParamErr().WithField(map[consts.FieldName]interface{}{
-				consts.Params: "idxs",
-				consts.Value:  idxs,
-			})
-			logs.Error(e.Error())
+			e := errs.NewInvalidParamErr()
+			logs.Error(e.Error(), zap.String(consts.Params, "idxs"), zap.Int64s(consts.Value, idxs))
 			return e
 		}
 	}
@@ -959,11 +937,8 @@ func (wal *Log) checkRange(idxs ...int64) error {
 func (wal *Log) checkDataSize(data []byte) error {
 	lengthOfData := int64(len(data))
 	if lengthOfData == 0 || lengthOfData > wal.opts.segmentCapacity {
-		e := consts.NewInvalidParamErr().WithField(map[consts.FieldName]interface{}{
-			consts.Params: "lengthOfData",
-			consts.Value:  lengthOfData,
-		})
-		logs.Error(e.Error())
+		e := errs.NewInvalidParamErr()
+		logs.Error(e.Error(), zap.String(consts.Params, "lengthOfData"), zap.Int64(consts.Value, lengthOfData))
 		return e
 	}
 	return nil

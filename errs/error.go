@@ -1,42 +1,28 @@
-package consts
+package errs
 
 import (
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // todo: code归类
 
 type KvErr struct {
-	msg    string
-	code   int64
-	err    error
-	fields map[FieldName]interface{}
+	msg  string
+	code int64
+	err  error
 }
 
-type FieldName string
-
-const (
-	Params = "params"
-	Value  = "value"
-)
-
 // Error 输出格式：
-// [错误码] 错误类型描述 ( => 包含错误详细描述 ) ( 字段=字段值 )...
-// 解释：(xxx) 表示可选内容；...表示可以有多个
+// [错误码] 错误类型描述 ( => 包含错误详细描述 )
+// 解释：(xxx) 表示可选内容
 func (ke *KvErr) Error() string {
 	details := fmt.Sprintf("[%d] %s", ke.code, ke.msg)
 	if ke.err != nil {
 		details += fmt.Sprintf(" => %s", ke.err)
 	}
 
-	var fields []string
-	for k, v := range ke.fields {
-		fields = append(fields, fmt.Sprintf("%v=%v", k, v))
-	}
-
-	return fmt.Sprintf("%s %s", details, strings.Join(fields, " "))
+	return details
 }
 
 func (ke *KvErr) Code() int64 {
@@ -45,17 +31,6 @@ func (ke *KvErr) Code() int64 {
 
 func (ke *KvErr) WithErr(err error) *KvErr {
 	ke.err = err
-	return ke
-}
-
-func (ke *KvErr) WithField(fields map[FieldName]interface{}) *KvErr {
-	if ke.fields == nil {
-		ke.fields = make(map[FieldName]interface{})
-	}
-
-	for k, v := range fields {
-		ke.fields[k] = v
-	}
 	return ke
 }
 

@@ -14,7 +14,7 @@ func LogMw(handleFn HandleFunc) HandleFunc {
 	return func(req *consts.KvRequest) (*consts.KvResponse, error) {
 		log.Info("req:", render.Render(req))
 		resp, err := handleFn(req)
-		log.Infof("resp: %#v, err: %#v", render.Render(resp), err)
+		log.Infof("resp: %#v, errs: %#v", render.Render(resp), err)
 		return resp, err
 	}
 }

@@ -47,7 +47,7 @@ func NewServer() (*Server, error) {
 func (srv *Server) Server(resp http.ResponseWriter, req *http.Request) {
 	kvReq, err := parseKvReq(req)
 	if err != nil {
-		log.Error("parse kvReq err:", err)
+		log.Error("parse kvReq errs:", err)
 		_, _ = resp.Write(mustMarshalKvResp(newExceptionResp(err)))
 		return
 	}
@@ -109,7 +109,7 @@ func parseKvReq(req *http.Request) (*consts.KvRequest, error) {
 
 	bodyBytes, err := io.ReadAll(req.Body)
 	if err = json.Unmarshal(bodyBytes, kvReq); err != nil {
-		log.Error("json unmarshal err:", err)
+		log.Error("json unmarshal errs:", err)
 		return nil, consts.JsonUnmarshalErr
 	}
 
@@ -119,7 +119,7 @@ func parseKvReq(req *http.Request) (*consts.KvRequest, error) {
 func mustMarshalKvResp(resp *consts.KvResponse) []byte {
 	respBytes, err := json.Marshal(resp)
 	if err != nil {
-		log.Error("json marshal err:", err)
+		log.Error("json marshal errs:", err)
 		panic(err)
 	}
 	return respBytes

@@ -5,8 +5,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/Trinoooo/eggie_kv/consts"
+	"github.com/Trinoooo/eggie_kv/errs"
 	"github.com/Trinoooo/eggie_kv/storage/core/ragdoll/logs"
 	"github.com/Trinoooo/eggie_kv/utils"
+	"go.uber.org/zap"
 	"io"
 	"os"
 	"path/filepath"
@@ -80,7 +82,7 @@ func (seg *segment) open(perm os.FileMode) error {
 	// 指定操作包含读和写
 	fd, err := utils.CheckAndCreateFile(seg.path, os.O_RDWR|os.O_CREATE|os.O_APPEND, perm)
 	if err != nil {
-		e := consts.NewOpenFileErr()
+		e := errs.NewOpenFileErr()
 		logs.Error(e.Error())
 		return e
 	}
@@ -88,7 +90,7 @@ func (seg *segment) open(perm os.FileMode) error {
 	seg.fd = fd
 	all, err := io.ReadAll(seg.fd)
 	if err != nil {
-		e := consts.NewReadFileErr().WithErr(err)
+		e := errs.NewReadFileErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
@@ -133,7 +135,7 @@ func (seg *segment) close() error {
 
 	err = seg.fd.Close()
 	if err != nil {
-		e := consts.NewCloseFileErr().WithErr(err)
+		e := errs.NewCloseFileErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
@@ -151,12 +153,12 @@ func (seg *segment) write(data []byte) error {
 	lengthOfBbuf := int64(len(seg.bbuf))
 	if lengthOfBlock+lengthOfBbuf > seg.maxSize {
 		// note: 这里不打日志是因为可能是稳态错误，在外层判断再打日志
-		return consts.NewSegmentFullErr()
+		return errs.NewSegmentFullErr()
 	}
 	nextBlockIdx := seg.lastBlockIdx + 1
 	if nextBlockIdx >= getMaxBlockCapacityInWAL() {
 		// note: 这里不打日志是因为可能是稳态错误，在外层判断再打日志
-		return consts.NewReachBlockIdxLimitErr()
+		return errs.NewReachBlockIdxLimitErr()
 	}
 	seg.bpos = append(seg.bpos, &position{
 		start: lengthOfBbuf,
@@ -180,7 +182,7 @@ func (seg *segment) sync() error {
 	dir, base := filepath.Dir(seg.path), filepath.Base(seg.path)
 	tempFile, err := os.CreateTemp(dir, base)
 	if err != nil {
-		e := consts.NewCreateTempFileErr().WithErr(err)
+		e := errs.NewCreateTempFileErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
@@ -188,14 +190,14 @@ func (seg *segment) sync() error {
 	// bugfix: 不调整文件偏移量在 io.Copy 时会有问题
 	_, err = seg.fd.Seek(0, io.SeekStart)
 	if err != nil {
-		e := consts.NewSeekFileErr().WithErr(err)
+		e := errs.NewSeekFileErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
 
 	_, err = io.Copy(tempFile, seg.fd)
 	if err != nil {
-		e := consts.NewCopyFileErr().WithErr(err)
+		e := errs.NewCopyFileErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
@@ -206,7 +208,7 @@ func (seg *segment) sync() error {
 		}
 		n, err := tempFile.Write(seg.bbuf[seg.bbufSyncIdx+written:])
 		if err != nil {
-			e := consts.NewWriteFileErr().WithErr(err)
+			e := errs.NewWriteFileErr().WithErr(err)
 			logs.Error(e.Error())
 			return e
 		}
@@ -217,28 +219,28 @@ func (seg *segment) sync() error {
 	seg.bbufSyncIdx = int64(len(seg.bbuf))
 	err = tempFile.Sync()
 	if err != nil {
-		e := consts.NewSyncFileErr().WithErr(err)
+		e := errs.NewSyncFileErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
 
 	err = seg.fd.Close()
 	if err != nil {
-		e := consts.NewCloseFileErr().WithErr(err)
+		e := errs.NewCloseFileErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
 
 	err = os.Remove(seg.path)
 	if err != nil {
-		e := consts.NewRemoveFileErr().WithErr(err)
+		e := errs.NewRemoveFileErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
 
 	err = os.Rename(tempFile.Name(), seg.path)
 	if err != nil {
-		e := consts.NewRenameFileErr().WithErr(err)
+		e := errs.NewRenameFileErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
@@ -262,11 +264,8 @@ func (seg *segment) read(idx int64) ([]byte, error) {
 		return seg.bbuf[pos.start+headerSize : pos.end], nil
 	}
 
-	e := consts.NewNotFoundErr().WithField(map[consts.FieldName]interface{}{
-		consts.Params: "idx,offset",
-		consts.Value:  []interface{}{idx, offset},
-	})
-	logs.Error(e.Error())
+	e := errs.NewNotFoundErr()
+	logs.Error(e.Error(), zap.String(consts.Params, "idx,offset"), zap.Any(consts.Value, []interface{}{idx, offset}))
 	return nil, e
 }
 
@@ -294,7 +293,7 @@ func (seg *segment) truncate(idx int64) (bool, error) {
 		seg.path = filepath.Join(filepath.Dir(seg.path), blockIdToBase(seg.firstBlockIdx, seg.hasSuffix))
 		err := os.Rename(oldPath, seg.path)
 		if err != nil {
-			e := consts.NewRenameFileErr().WithErr(err)
+			e := errs.NewRenameFileErr().WithErr(err)
 			logs.Error(e.Error())
 			return false, e
 		}
@@ -303,7 +302,7 @@ func (seg *segment) truncate(idx int64) (bool, error) {
 	// 清空文件内容
 	err := seg.fd.Truncate(0)
 	if err != nil {
-		e := consts.NewTruncateFileErr().WithErr(err)
+		e := errs.NewTruncateFileErr().WithErr(err)
 		logs.Error(e.Error())
 		return false, e
 	}
@@ -328,7 +327,7 @@ func (seg *segment) rename() error {
 
 	err := os.Rename(oldPath, seg.path)
 	if err != nil {
-		e := consts.NewRenameFileErr().WithErr(err)
+		e := errs.NewRenameFileErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
@@ -339,7 +338,7 @@ func (seg *segment) rename() error {
 func (seg *segment) size() (int64, error) {
 	stat, err := os.Stat(seg.path)
 	if err != nil {
-		e := consts.NewFileStatErr().WithErr(err)
+		e := errs.NewFileStatErr().WithErr(err)
 		logs.Error(e.Error())
 		return 0, e
 	}
@@ -363,7 +362,7 @@ func baseToBlockId(base string) (int64, bool, error) {
 	blockIdStr, hasSuffix := strings.CutSuffix(base, suffix)
 	firstBlockIdOfSegment, err := strconv.ParseInt(blockIdStr, 10, 64)
 	if err != nil {
-		e := consts.NewParseIntErr().WithErr(err)
+		e := errs.NewParseIntErr().WithErr(err)
 		logs.Error(e.Error())
 		return 0, false, e
 	}
@@ -425,7 +424,7 @@ func parseBinary(raw []byte) ([]byte, int64, int64, error) {
 	// 再检查blockSize是不是比raw的长度大，最后校验读取到的checksum
 	// 是否和计算出的checksum一致（验证数据完整性）
 	if rawSize < headerSize {
-		e := consts.NewCorruptErr()
+		e := errs.NewCorruptErr()
 		logs.Error(e.Error())
 		return nil, 0, 0, e
 	}
@@ -434,7 +433,7 @@ func parseBinary(raw []byte) ([]byte, int64, int64, error) {
 	checksum := raw[headerSummaryOffset:headerDataOffset]
 	blockSize := headerDataOffset + length
 	if rawSize < blockSize {
-		e := consts.NewCorruptErr()
+		e := errs.NewCorruptErr()
 		logs.Error(e.Error())
 		return nil, 0, 0, e
 	}
@@ -444,7 +443,7 @@ func parseBinary(raw []byte) ([]byte, int64, int64, error) {
 	current := md5.Sum(dataAndLength)
 	for i := 0; i < len(checksum); i++ {
 		if checksum[i] != current[i] {
-			e := consts.NewCorruptErr()
+			e := errs.NewCorruptErr()
 			logs.Error(e.Error())
 			return nil, 0, 0, e
 		}
