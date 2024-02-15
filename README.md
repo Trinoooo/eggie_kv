@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # 🌚 Eggie KV
 <div align="center">
 一个简单的、支持持久化的、基于内存的key-value存储
@@ -8,11 +7,10 @@
 ![License][license] [![GoDoc][doc-img]][doc] [![Test Status][ci-img]][ci] [![Coverage Status][cov-img]][cov] [![Chat][chat-img]][chat]
 
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-[![All Contributors](https://img.shields.io/badge/all_contributors-1-orange.svg?style=flat-square)](#contributors-)
+[![All Contributors](https://img.shields.io/badge/all_contributors-2-orange.svg?style=flat-square)](#contributors-)
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 </div>
 
-<<<<<<< HEAD
 ## 安装
 
 我保证在项目可以真正跑起来之后会回来完善这里🫡
