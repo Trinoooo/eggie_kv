@@ -943,3 +943,16 @@ func (wal *Log) checkDataSize(data []byte) error {
 	}
 	return nil
 }
+
+func (wal *Log) Len() (int64, error) {
+	err := wal.checkState(true, true, true)
+	if err != nil {
+		return 0, err
+	}
+
+	if wal.firstBlockIdx <= wal.lastBlockIdx {
+		return wal.lastBlockIdx - wal.firstBlockIdx, nil
+	}
+
+	return wal.lastBlockIdx + getMaxBlockCapacityInWAL() - wal.firstBlockIdx, nil
+}
