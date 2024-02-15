@@ -41,6 +41,7 @@
   <tbody>
     <tr>
       <td align="center" valign="top" width="14.28%"><a href="https://trinoooo.github.io/"><img src="https://avatars.githubusercontent.com/u/101500554?v=4?s=100" width="100px;" alt="Trino"/><br /><sub><b>Trino</b></sub></a><br /><a href="https://github.com/Trinoooo/eggie_kv/commits?author=Trinoooo" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/RocooHash"><img src="https://avatars.githubusercontent.com/u/53431133?v=4?s=100" width="100px;" alt="Liang Xuhao"/><br /><sub><b>Liang Xuhao</b></sub></a><br /><a href="https://github.com/Trinoooo/eggie_kv/commits?author=RocooHash" title="Code">💻</a></td>
     </tr>
   </tbody>
 </table>
