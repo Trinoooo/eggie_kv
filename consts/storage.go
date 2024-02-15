@@ -23,3 +23,7 @@ var (
 	BaseDir           string
 	DefaultConfigPath string
 )
+
+const (
+	Ragdoll = "ragdoll"
+)

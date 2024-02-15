@@ -1,14 +1,14 @@
 package ragdoll
 
 import (
-	"github.com/Trinoooo/eggie_kv/consts"
+	"github.com/Trinoooo/eggie_kv/errs"
 	"github.com/Trinoooo/eggie_kv/utils"
 	"github.com/bytedance/gopkg/collection/lscq"
 	"unsafe"
 )
 
 type Result struct {
-	Error *consts.KvErr
+	Error *errs.KvErr
 	Value []byte
 }
 

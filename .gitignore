@@ -18,7 +18,8 @@
 .env.test.local
 .env.production.local
 **/benchmark
-**/test_data
+**/test_data/
+**/*.out
 
 npm-debug.log*
 yarn-debug.log*

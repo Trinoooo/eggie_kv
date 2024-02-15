@@ -94,7 +94,7 @@ func (wrapper *CliWrapper) withAction() {
 
 		serverUrl, err := url.Parse(fmt.Sprintf("http://%s:%d/", ctx.String("host"), ctx.Int64("port")))
 		if err != nil {
-			log.Println("error occur when parse server url, err: ", err)
+			log.Println("error occur when parse server url, errs: ", err)
 			return nil
 		}
 

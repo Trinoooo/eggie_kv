@@ -5,67 +5,94 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/Trinoooo/eggie_kv/consts"
+	"github.com/Trinoooo/eggie_kv/errs"
+	"github.com/Trinoooo/eggie_kv/storage/core/ragdoll/logs"
 	"github.com/Trinoooo/eggie_kv/utils"
+	"go.uber.org/zap"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 )
 
 const (
-	headerLengthSize  = 8  // 记录头中length字段长度
-	headerSummarySize = 16 // 记录头中checksum字段长度
-	headerSize        = 24 // 记录头总长度
+	// 字段长度，单位字节
+	headerLengthSize  = 8
+	headerBlockIdSize = 8
+	headerSummarySize = 16
+	headerSize        = 32
+
+	// 字段偏移量，单位字节
+	headerLengthOffset  = 0
+	headerBlockIdOffset = 8
+	headerSummaryOffset = 16
+	headerDataOffset    = 32
 )
 
-type bpos struct {
-	start int64
-	end   int64
+const suffix = ".active" // suffix 活跃segment文件的后缀标识
+
+// getBaseFormat 获取segment文件名中blockIdx部分宽度
+func getBaseFormat() string {
+	return utils.GetValueOnEnv("%010d", "%08d").(string)
+}
+
+type position struct {
+	start int64 // start 表示起始偏移量
+	end   int64 // end 表示结束偏移量
 }
 
 // TODO: 补充corrupt处理
 type segment struct {
-	fd           *os.File // fd segment文件描述符
-	path         string   // path segment文件路径
-	startBlockId int64    // startBlockId segment起始blockId
-	// bbuf segment中存储的数据内容
-	// segment存储的最大容量取决于外部，存储结构如下：
+	fd   *os.File // fd segment 文件描述符
+	path string   // path segment 文件路径
+	// startBlockIdx segment 中的起始 blockIdx，和 firstBlockIdx 的区别是前者指代 segment 文件的起始边界
+	// 边界存在不意味着第一条记录存在，后者指代 segment 文件中第一个block的blockIdx
+	startBlockIdx *int64
+	firstBlockIdx int64 // firstBlockIdx segment 中的起始 blockIdx
+	lastBlockIdx  int64 // lastBlockIdx segment 中最后的 blockIdx
+	// bbuf segment 中存储的数据内容
+	// segment 存储的最大容量取决于外部，存储结构如下：
 	// | block #1 | block #2 | 0000 |
-	// 当文件剩余容量不足以再写下一个完整block时
-	// 文件末尾剩余内容不再使用，保证文件开头是一个完整的block
-	bbuf []byte
-	// bpos 指示bbuf中每个block的位置
-	// start 表示起始偏移量
-	// end 表示结束偏移量
-	bpos           []*bpos
-	nextByteToSync int64 // nextByteToSync 下一个要同步的字节偏移量
-	maxSize        int64 // maxSize segment文件最大体积
+	// 当文件剩余容量不足以再写下一个完整 block 时
+	// 文件末尾剩余内容不再使用，保证文件开头是一个完整的 block
+	bbuf        []byte
+	bpos        []*position // bpos 指示 bbuf 中每个block的位置
+	bbufSyncIdx int64       // bbufSyncIdx 下一个要刷盘的 bbuf 偏移量
+
+	maxSize   int64 // maxSize segment 文件最大体积
+	hasSuffix bool  // hasSuffix segment 文件路径中是否包含.active后缀
 }
 
 func newSegment(path string, maxSize int64) *segment {
 	seg := &segment{}
 	seg.path = path
 	seg.maxSize = maxSize
+	seg.firstBlockIdx = -1
+	seg.lastBlockIdx = -1
 	return seg
 }
 
-func (seg *segment) getStartBlockId() int64 {
-	blockId, _ := baseToBlockId(filepath.Base(seg.path))
-	return blockId
-}
-
+// open 打开segment
+// 需要外部保证线程安全
 func (seg *segment) open(perm os.FileMode) error {
 	// 如果是新segment文件，则创建一个新文件
 	// 否则以追加模式进行操作
 	// 指定操作包含读和写
 	fd, err := utils.CheckAndCreateFile(seg.path, os.O_RDWR|os.O_CREATE|os.O_APPEND, perm)
 	if err != nil {
-		return consts.OpenFileErr
+		e := errs.NewOpenFileErr()
+		logs.Error(e.Error())
+		return e
 	}
 
 	seg.fd = fd
 	all, err := io.ReadAll(seg.fd)
 	if err != nil {
-		return err
+		e := errs.NewReadFileErr().WithErr(err)
+		logs.Error(e.Error())
+		return e
 	}
 
 	bps, bbf, err := loadBinary(all)
@@ -75,14 +102,31 @@ func (seg *segment) open(perm os.FileMode) error {
 
 	seg.bbuf = bbf
 	seg.bpos = bps
-	seg.nextByteToSync = int64(len(seg.bbuf))
-	seg.startBlockId, err = baseToBlockId(filepath.Base(seg.path))
+	lengthOfBpos := int64(len(seg.bpos))
+	seg.bbufSyncIdx = int64(len(seg.bbuf))
+	startBlockIdx, hasSuffix, err := baseToBlockId(filepath.Base(seg.path))
 	if err != nil {
 		return err
 	}
+	seg.startBlockIdx = &startBlockIdx
+	if lengthOfBpos > 0 {
+		seg.firstBlockIdx = startBlockIdx
+		seg.lastBlockIdx = seg.firstBlockIdx + lengthOfBpos - 1
+	}
+	seg.hasSuffix = hasSuffix
 	return nil
 }
 
+func (seg *segment) getStartBlockIdx() int64 {
+	if seg.startBlockIdx != nil {
+		return *seg.startBlockIdx
+	}
+	blockId, _, _ := baseToBlockId(filepath.Base(seg.path))
+	return blockId
+}
+
+// close 关闭 segment 文件
+// 需要外部保证线程安全
 func (seg *segment) close() error {
 	err := seg.sync()
 	if err != nil {
@@ -91,145 +135,278 @@ func (seg *segment) close() error {
 
 	err = seg.fd.Close()
 	if err != nil {
-		return err
+		e := errs.NewCloseFileErr().WithErr(err)
+		logs.Error(e.Error())
+		return e
 	}
 
+	// note：避免内存泄漏
 	seg.bbuf = nil
 	seg.bpos = nil
 	return nil
 }
 
-// write 写日志到数据文件中。
+// write 写日志到数据文件中
+// 需要外部保证线程安全
 func (seg *segment) write(data []byte) error {
-	b := buildBinary(data)
-	lb := int64(len(b))
-	lbbf := int64(len(seg.bbuf))
-	if lb+lbbf > seg.maxSize {
-		return consts.SegmentFullErr
+	lengthOfBlock := int64(len(data) + headerSize)
+	lengthOfBbuf := int64(len(seg.bbuf))
+	if lengthOfBlock+lengthOfBbuf > seg.maxSize {
+		// note: 这里不打日志是因为可能是稳态错误，在外层判断再打日志
+		return errs.NewSegmentFullErr()
 	}
-
-	seg.bpos = append(seg.bpos, &bpos{
-		start: lbbf,
-		end:   lbbf + lb,
+	nextBlockIdx := seg.lastBlockIdx + 1
+	if nextBlockIdx >= getMaxBlockCapacityInWAL() {
+		// note: 这里不打日志是因为可能是稳态错误，在外层判断再打日志
+		return errs.NewReachBlockIdxLimitErr()
+	}
+	seg.bpos = append(seg.bpos, &position{
+		start: lengthOfBbuf,
+		end:   lengthOfBbuf + lengthOfBlock,
 	})
-
-	seg.bbuf = append(seg.bbuf, b...)
+	seg.bbuf = append(seg.bbuf, buildBinary(nextBlockIdx, data)...)
+	seg.lastBlockIdx = nextBlockIdx
 	return nil
 }
 
 // sync 持久化数据到磁盘
-// todo: 文件完整性
+// 需要外部保证线程安全
 func (seg *segment) sync() error {
 	var written int64
-	lenToWrite := int64(len(seg.bbuf)) - seg.nextByteToSync
+	lenToWrite := int64(len(seg.bbuf)) - seg.bbufSyncIdx
+	// fast-through
+	if lenToWrite == 0 {
+		return nil
+	}
+
+	dir, base := filepath.Dir(seg.path), filepath.Base(seg.path)
+	tempFile, err := os.CreateTemp(dir, base)
+	if err != nil {
+		e := errs.NewCreateTempFileErr().WithErr(err)
+		logs.Error(e.Error())
+		return e
+	}
+
+	// bugfix: 不调整文件偏移量在 io.Copy 时会有问题
+	_, err = seg.fd.Seek(0, io.SeekStart)
+	if err != nil {
+		e := errs.NewSeekFileErr().WithErr(err)
+		logs.Error(e.Error())
+		return e
+	}
+
+	_, err = io.Copy(tempFile, seg.fd)
+	if err != nil {
+		e := errs.NewCopyFileErr().WithErr(err)
+		logs.Error(e.Error())
+		return e
+	}
+
 	for {
 		if written == lenToWrite {
 			break
 		}
-		n, err := seg.fd.Write(seg.bbuf[seg.nextByteToSync:])
+		n, err := tempFile.Write(seg.bbuf[seg.bbufSyncIdx+written:])
 		if err != nil {
-			return err
+			e := errs.NewWriteFileErr().WithErr(err)
+			logs.Error(e.Error())
+			return e
 		}
 
 		written += int64(n)
 	}
-	seg.nextByteToSync = int64(len(seg.bbuf))
 
-	err := seg.fd.Sync()
+	seg.bbufSyncIdx = int64(len(seg.bbuf))
+	err = tempFile.Sync()
 	if err != nil {
-		return err
+		e := errs.NewSyncFileErr().WithErr(err)
+		logs.Error(e.Error())
+		return e
 	}
 
+	err = seg.fd.Close()
+	if err != nil {
+		e := errs.NewCloseFileErr().WithErr(err)
+		logs.Error(e.Error())
+		return e
+	}
+
+	err = os.Remove(seg.path)
+	if err != nil {
+		e := errs.NewRemoveFileErr().WithErr(err)
+		logs.Error(e.Error())
+		return e
+	}
+
+	err = os.Rename(tempFile.Name(), seg.path)
+	if err != nil {
+		e := errs.NewRenameFileErr().WithErr(err)
+		logs.Error(e.Error())
+		return e
+	}
+
+	seg.fd = tempFile
 	return nil
 }
 
+// read 读取
+// 需要外部保证线程安全
 func (seg *segment) read(idx int64) ([]byte, error) {
-	for inner, pos := range seg.bpos {
-		if seg.startBlockId+int64(inner) == idx {
-			return seg.bbuf[pos.start+headerSize : pos.end], nil
+	lengthOfBpos := len(seg.bpos)
+	offset := idx - seg.firstBlockIdx
+	targetIdx := sort.Search(lengthOfBpos, func(i int) bool {
+		return int64(i) >= offset
+	})
+
+	if targetIdx < lengthOfBpos && int64(targetIdx) == offset {
+		// bugfix: 读到的内容没有去掉header
+		pos := seg.bpos[targetIdx]
+		return seg.bbuf[pos.start+headerSize : pos.end], nil
+	}
+
+	e := errs.NewNotFoundErr()
+	logs.Error(e.Error(), zap.String(consts.LogFieldParams, "idx,offset"), zap.Any(consts.LogFieldValue, []interface{}{idx, offset}))
+	return nil, e
+}
+
+// truncate 截断 segment 文件中的指定范围数据
+// 如果执行成功会截断 segment 文件中 [firstBlockIdx, idx] 范围数据
+// 如果idx超过 segment 文件容纳的block数量，该文件会被截断成空文件
+// 需要外部保证线程安全
+func (seg *segment) truncate(idx int64) (bool, error) {
+	var empty bool
+	if idx < seg.firstBlockIdx || idx > seg.lastBlockIdx {
+		seg.bpos = make([]*position, 0, consts.KB)
+		seg.bbuf = make([]byte, 0, seg.maxSize)
+		seg.bbufSyncIdx = 0
+		empty = true
+	} else {
+		firstBlockIdxAfterTruncate := (idx + 1) - seg.getStartBlockIdx()
+		seg.firstBlockIdx = idx
+		seg.bpos = seg.bpos[firstBlockIdxAfterTruncate:]
+		firstByteAfterTruncate := seg.bpos[0].start
+		seg.bbuf = seg.bbuf[firstByteAfterTruncate:] // 前面的判断保证这里取seg.bpos[0]不会有问题
+		// 下面会完全截断，所以从0开始同步buf内容
+		seg.bbufSyncIdx = 0
+		// 由于segment文件由起始blockId命名，因此需要重命名
+		oldPath := seg.path
+		seg.path = filepath.Join(filepath.Dir(seg.path), blockIdToBase(seg.firstBlockIdx, seg.hasSuffix))
+		err := os.Rename(oldPath, seg.path)
+		if err != nil {
+			e := errs.NewRenameFileErr().WithErr(err)
+			logs.Error(e.Error())
+			return false, e
 		}
 	}
 
-	return nil, consts.NotFoundErr
+	// 清空文件内容
+	err := seg.fd.Truncate(0)
+	if err != nil {
+		e := errs.NewTruncateFileErr().WithErr(err)
+		logs.Error(e.Error())
+		return false, e
+	}
+
+	err = seg.sync()
+	if err != nil {
+		return false, err
+	}
+
+	return empty, nil
 }
 
-func (seg *segment) truncate(idx int64) error {
-	posOffset := idx - seg.startBlockId
-	firstPosAfterTruncate := seg.bpos[posOffset]
-	seg.bpos = seg.bpos[posOffset:]
-	seg.bbuf = seg.bbuf[firstPosAfterTruncate.start:]
-	// fd.Truncate 内部调用Ftruncate
-	// 是相对当前文件offset改变文件大小
-	_, err := seg.fd.Seek(firstPosAfterTruncate.start, 0)
-	if err != nil {
-		return err
+// rename 重命名 segment 文件
+// 需要外部保证线程安全
+func (seg *segment) rename() error {
+	oldPath := seg.path
+	if seg.hasSuffix {
+		seg.path, _ = strings.CutSuffix(seg.path, suffix)
+	} else {
+		seg.path += suffix
 	}
 
-	// 保留截断后的文件大小
-	lbuf := int64(len(seg.bbuf))
-	err = seg.fd.Truncate(lbuf)
+	err := os.Rename(oldPath, seg.path)
 	if err != nil {
-		return err
+		e := errs.NewRenameFileErr().WithErr(err)
+		logs.Error(e.Error())
+		return e
 	}
-	seg.nextByteToSync = lbuf
-	oldPath := seg.path
-	seg.path = filepath.Join(filepath.Dir(seg.path), blockIdToBase(idx))
-	err = os.Rename(oldPath, seg.path)
-	if err != nil {
-		return err
-	}
+
 	return nil
 }
 
-func blockIdToBase(blockId int64) string {
-	return fmt.Sprintf("%010d", blockId)
+func (seg *segment) size() (int64, error) {
+	stat, err := os.Stat(seg.path)
+	if err != nil {
+		e := errs.NewFileStatErr().WithErr(err)
+		logs.Error(e.Error())
+		return 0, e
+	}
+
+	return stat.Size(), nil
 }
 
-func baseToBlockId(base string) (int64, error) {
-	var firstBlockIdOfSegment int64
-	_, err := fmt.Sscanf(base, "%010d", &firstBlockIdOfSegment)
-	if err != nil {
-		return 0, err
+// blockIdToBase 起始blockIdx转文件名
+// setSuffix 设置为true时会在文件名末尾追加.active后缀
+func blockIdToBase(blockId int64, setSuffix bool) string {
+	base := fmt.Sprintf(getBaseFormat(), blockId)
+	if setSuffix {
+		base += suffix
 	}
-	return firstBlockIdOfSegment, nil
+	return base
+}
+
+// baseToBlockId 文件名转起始blockIdx
+// 额外返回文件名中是否包含.active后缀
+func baseToBlockId(base string) (int64, bool, error) {
+	blockIdStr, hasSuffix := strings.CutSuffix(base, suffix)
+	firstBlockIdOfSegment, err := strconv.ParseInt(blockIdStr, 10, 64)
+	if err != nil {
+		e := errs.NewParseIntErr().WithErr(err)
+		logs.Error(e.Error())
+		return 0, false, e
+	}
+	return firstBlockIdOfSegment, hasSuffix, nil
 }
 
 // buildBinary 日志数据 -> 格式化二进制数据
 // 存储在文件中的block结构：
-// | length 8字节 | checksum 16字节 | payload x字节 |
-func buildBinary(data []byte) []byte {
+// | length 8字节 | blockid 8字节 | checksum 16字节 | payload x字节 |
+func buildBinary(blockId int64, data []byte) []byte {
 	length := int64(len(data))
 	// prof: 避免buf重分配
 	buf := make([]byte, headerSize, headerSize+length)
-	binary.PutVarint(buf[:headerLengthSize], length)
-	var dataAndLength []byte
-	dataAndLength = append(dataAndLength, data...)
-	dataAndLength = append(dataAndLength, buf[:headerLengthSize]...)
-	checksum := md5.Sum(dataAndLength)
+	binary.PutVarint(buf[:headerBlockIdOffset], length)
+	binary.PutVarint(buf[headerBlockIdOffset:headerSummaryOffset], blockId)
+	var dataAndHeader []byte
+	dataAndHeader = append(dataAndHeader, data...)
+	dataAndHeader = append(dataAndHeader, buf[:headerSummaryOffset]...)
+	checksum := md5.Sum(dataAndHeader)
 	for i := 0; i < len(checksum); i++ {
-		buf[headerLengthSize+i] = checksum[i]
+		buf[headerSummaryOffset+i] = checksum[i]
 	}
 	buf = append(buf, data...)
 	return buf
 }
 
 // loadBinary 从文件装载格式化二进制数据
-func loadBinary(raw []byte) ([]*bpos, []byte, error) {
+func loadBinary(raw []byte) ([]*position, []byte, error) {
 	var start int64 = 0
+	fileSize := int64(len(raw))
 	// prof: 粗拍一个cap，避免小数据段导致的频繁重分配问题
-	bps := make([]*bpos, 0, consts.KB)
-	bbf := make([]byte, 0, consts.MB)
+	bps := make([]*position, 0, consts.KB)
+	bbf := make([]byte, 0, fileSize)
 	for {
-		if int64(len(raw)) == start {
+		if start == fileSize {
 			break
 		}
 
-		block, offset, err := parseBinary(raw[start:])
+		block, offset, _, err := parseBinary(raw[start:])
 		if err != nil {
 			return nil, nil, err
 		}
 
-		bps = append(bps, &bpos{
+		bps = append(bps, &position{
 			start: start,
 			end:   start + offset,
 		})
@@ -241,23 +418,35 @@ func loadBinary(raw []byte) ([]*bpos, []byte, error) {
 }
 
 // parseBinary 解析单个格式化二进制数据 -> 日志数据
-func parseBinary(raw []byte) ([]byte, int64, error) {
-	// length + chechsum
-	if len(raw) < headerSize {
-		return nil, 0, consts.CorruptErr
+func parseBinary(raw []byte) ([]byte, int64, int64, error) {
+	rawSize := int64(len(raw))
+	// note: 先校验headerSize是不是比raw的长度大，校验通过后
+	// 再检查blockSize是不是比raw的长度大，最后校验读取到的checksum
+	// 是否和计算出的checksum一致（验证数据完整性）
+	if rawSize < headerSize {
+		e := errs.NewCorruptErr()
+		logs.Error(e.Error())
+		return nil, 0, 0, e
 	}
-
-	length, _ := binary.Varint(raw[:headerLengthSize])
-	checksum := raw[headerLengthSize:headerSummarySize]
-	end := headerSize + length
+	length, _ := binary.Varint(raw[:headerBlockIdOffset])
+	blockId, _ := binary.Varint(raw[headerBlockIdOffset:headerSummaryOffset])
+	checksum := raw[headerSummaryOffset:headerDataOffset]
+	blockSize := headerDataOffset + length
+	if rawSize < blockSize {
+		e := errs.NewCorruptErr()
+		logs.Error(e.Error())
+		return nil, 0, 0, e
+	}
 	var dataAndLength []byte
-	dataAndLength = append(dataAndLength, raw[headerSize:end]...)
-	dataAndLength = append(dataAndLength, raw[:headerLengthSize]...)
-	cc := md5.Sum(dataAndLength)
+	dataAndLength = append(dataAndLength, raw[headerDataOffset:blockSize]...)
+	dataAndLength = append(dataAndLength, raw[:headerSummaryOffset]...)
+	current := md5.Sum(dataAndLength)
 	for i := 0; i < len(checksum); i++ {
-		if checksum[i] != cc[i] {
-			return nil, 0, consts.CorruptErr
+		if checksum[i] != current[i] {
+			e := errs.NewCorruptErr()
+			logs.Error(e.Error())
+			return nil, 0, 0, e
 		}
 	}
-	return raw[:end], end, nil
+	return raw[:blockSize], blockSize, blockId, nil
 }

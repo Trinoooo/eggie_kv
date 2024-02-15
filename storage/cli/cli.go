@@ -3,9 +3,12 @@ package cli
 import (
 	"fmt"
 	"github.com/Trinoooo/eggie_kv/consts"
+	"github.com/Trinoooo/eggie_kv/errs"
+	"github.com/Trinoooo/eggie_kv/storage/core/ragdoll/logs"
 	"github.com/Trinoooo/eggie_kv/storage/server"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
+	"go.uber.org/zap"
 	"net/http"
 	"os"
 	"os/signal"
@@ -27,7 +30,9 @@ var (
 		Usage:   "server port number, 0 < port < 65535 are available.",
 		Action: func(c *cli.Context, port int64) error {
 			if port <= 0 || port > 65535 {
-				return consts.InvalidParamErr
+				e := errs.NewInvalidParamErr()
+				logs.Error(e.Error(), zap.String(consts.LogFieldParams, "port"), zap.Int64(consts.LogFieldValue, port))
+				return e
 			}
 			return nil
 		},
@@ -40,7 +45,9 @@ var (
 		Usage:   "max size per segment file, 0 < size <= 1GB are available.",
 		Action: func(context *cli.Context, size int64) error {
 			if size < 0 || size > consts.GB {
-				return consts.InvalidParamErr
+				e := errs.NewInvalidParamErr()
+				logs.Error(e.Error(), zap.String(consts.LogFieldParams, "size"), zap.Int64(consts.LogFieldValue, size))
+				return e
 			}
 			return nil
 		},
@@ -53,7 +60,9 @@ var (
 		Usage:   "max connection number, 0 < number <= 4000 are available.",
 		Action: func(context *cli.Context, number int64) error {
 			if number < 0 || number > 4000 {
-				return consts.InvalidParamErr
+				e := errs.NewInvalidParamErr()
+				logs.Error(e.Error(), zap.String(consts.LogFieldParams, "number"), zap.Int64(consts.LogFieldValue, number))
+				return e
 			}
 			return nil
 		},

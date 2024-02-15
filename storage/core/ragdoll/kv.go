@@ -1,7 +1,9 @@
 package ragdoll
 
 import (
+	"errors"
 	"github.com/Trinoooo/eggie_kv/consts"
+	errs "github.com/Trinoooo/eggie_kv/errs"
 	"github.com/Trinoooo/eggie_kv/storage/core/iface"
 	"github.com/Trinoooo/eggie_kv/storage/core/ragdoll/wal"
 	"github.com/spf13/viper"
@@ -17,6 +19,7 @@ type KV struct {
 }
 
 func New(config *viper.Viper) (iface.ICore, error) {
+	var kvErr *errs.KvErr
 	data, err := NewData("")
 	if err != nil {
 		return nil, err
@@ -24,6 +27,8 @@ func New(config *viper.Viper) (iface.ICore, error) {
 
 	wal, err := wal.Open("123", wal.NewOptions())
 	if err != nil {
+		if errors.As(err, &kvErr) {
+		}
 		return nil, err
 	}
 

@@ -1,0 +1,29 @@
+name: Go Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.21
+
+      - name: Check out code
+        uses: actions/checkout@v2
+
+      - name: Run tests
+        run: make -f makefile test-with-cover TestPackage=./storage/core/ragdoll/wal
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v4.0.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          verbose: true
+          files: ./c.out
