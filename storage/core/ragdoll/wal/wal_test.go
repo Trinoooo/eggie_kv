@@ -311,7 +311,7 @@ func TestLog_Read(t *testing.T) {
 		}
 
 		if !bytes.Equal(data, testData[3]) {
-			t.Errorf("expect %#.all-contributorsrc got %#.all-contributorsrc", testData[3], data)
+			t.Errorf("expect %#v got %#v", testData[3], data)
 		}
 	}
 
