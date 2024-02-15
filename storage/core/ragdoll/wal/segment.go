@@ -265,7 +265,7 @@ func (seg *segment) read(idx int64) ([]byte, error) {
 	}
 
 	e := errs.NewNotFoundErr()
-	logs.Error(e.Error(), zap.String(consts.Params, "idx,offset"), zap.Any(consts.Value, []interface{}{idx, offset}))
+	logs.Error(e.Error(), zap.String(consts.LogFieldParams, "idx,offset"), zap.Any(consts.LogFieldValue, []interface{}{idx, offset}))
 	return nil, e
 }
 

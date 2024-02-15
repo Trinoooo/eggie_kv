@@ -31,7 +31,7 @@ var (
 		Action: func(c *cli.Context, port int64) error {
 			if port <= 0 || port > 65535 {
 				e := errs.NewInvalidParamErr()
-				logs.Error(e.Error(), zap.String(consts.Params, "port"), zap.Int64(consts.Value, port))
+				logs.Error(e.Error(), zap.String(consts.LogFieldParams, "port"), zap.Int64(consts.LogFieldValue, port))
 				return e
 			}
 			return nil
@@ -46,7 +46,7 @@ var (
 		Action: func(context *cli.Context, size int64) error {
 			if size < 0 || size > consts.GB {
 				e := errs.NewInvalidParamErr()
-				logs.Error(e.Error(), zap.String(consts.Params, "size"), zap.Int64(consts.Value, size))
+				logs.Error(e.Error(), zap.String(consts.LogFieldParams, "size"), zap.Int64(consts.LogFieldValue, size))
 				return e
 			}
 			return nil
@@ -61,7 +61,7 @@ var (
 		Action: func(context *cli.Context, number int64) error {
 			if number < 0 || number > 4000 {
 				e := errs.NewInvalidParamErr()
-				logs.Error(e.Error(), zap.String(consts.Params, "number"), zap.Int64(consts.Value, number))
+				logs.Error(e.Error(), zap.String(consts.LogFieldParams, "number"), zap.Int64(consts.LogFieldValue, number))
 				return e
 			}
 			return nil

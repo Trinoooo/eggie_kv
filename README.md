@@ -1,104 +1,49 @@
-# eggie_kv
+# 🌚 Eggie KV
+<div align="center">
+一个简单的、支持持久化的、基于内存的key-value存储
 
-<div>
-<img 
-    src="https://img.shields.io/github/license/Trinoooo/eggie_kv" 
-    alt="license"
->
-<a href="https://pkg.go.dev/github.com/Trinoooo/eggie_kv">
-<img 
-    src="https://img.shields.io/badge/reference-reference?logo=go&labelColor=gray&color=blue&link=https%3A%2F%2Fpkg.go.dev%2Fgithub.com%2FTrinoooo%2Feggie_kv" 
-    alt="reference"
->
-</a>
-<a href="https://github.com/Trinoooo/eggie_kv/actions/workflows/test.yaml">
-<img 
-    src="https://github.com/Trinoooo/eggie_kv/actions/workflows/test.yaml/badge.svg" 
-    alt="go test"
->
-</a>
-<a href="https://codecov.io/gh/Trinoooo/eggie_kv" > 
- <img src="https://codecov.io/gh/Trinoooo/eggie_kv/graph/badge.svg?token=A86TGA8XOE" alt="codecov"/> 
-</a>
+![Eggie KV logo](asset/logo.jpeg)
+
+![License][license] [![GoDoc][doc-img]][doc] [![Test Status][ci-img]][ci] [![Coverage Status][cov-img]][cov] [![Chat][chat-img]][chat] [![All Contributors][contributor-img]](#contributors)
 </div>
 
-## 模块间关系图
-```text
-.
-├── LICENSE
-├── README.md
-├── consts
-│   ├── common.go
-│   └── error.go
-├── core
-│   ├── cli
-│   │   └── cli.go
-│   ├── eggie_kv_server
-│   ├── kv
-│   │   ├── batch.go
-│   │   ├── channel.go
-│   │   ├── data.go
-│   │   ├── kv.go
-│   │   ├── wal.go
-│   │   └── wal_test.go
-│   ├── main.go
-│   └── server
-│       ├── handler.go
-│       ├── mw.go
-│       └── server.go
-├── doc
-│   ├── README.md
-│   ├── babel.config.js
-│   ├── blog
-│   │   ├── 2019-05-28-first-blog-post.md
-│   │   ├── 2019-05-29-long-blog-post.md
-│   │   ├── 2021-08-01-mdx-blog-post.mdx
-│   │   ├── 2021-08-26-welcome
-│   │   └── authors.yml
-│   ├── build
-│   │   ├── 404.html
-│   │   ├── assets
-│   │   ├── blog
-│   │   ├── docs
-│   │   ├── img
-│   │   ├── index.html
-│   │   ├── markdown-page
-│   │   └── sitemap.xml
-│   ├── docs
-│   │   ├── intro.md
-│   │   ├── tutorial-basics
-│   │   └── tutorial-extras
-│   ├── docusaurus.config.js
-│   ├── package-lock.json
-│   ├── package.json
-│   ├── sidebars.js
-│   ├── src
-│   │   ├── components
-│   │   ├── css
-│   │   └── pages
-│   └── static
-│       └── img
-├── go.mod
-├── go.sum
-├── interactive
-│   ├── cli
-│   │   ├── eggie_kv_client
-│   │   └── main.go
-│   └── client_sdk
-├── makefile
-├── test_data
-│   ├── f1
-│   ├── f2
-│   └── f3
-└── utils
-    ├── chan.go
-    ├── chan_test.go
-    ├── file.go
-    ├── file_test.go
-    ├── lock.go
-    ├── lock_test.go
-    ├── panic.go
-    └── panic_test.go
+## 安装
 
-```
+我保证在项目可以真正跑起来之后会回来完善这里🫡
 
+## 快速开始
+
+同上，我保证在项目可以真正跑起来之后会回来完善这里🫡
+
+## 性能测试
+
+同上，我保证在项目可以真正跑起来之后会回来完善这里🫡
+
+## 开发状态：我们正朝着积极的目标前进！
+
+![Plan](asset/plan.png)
+
+## 参与贡献
+
+我们欢迎稳定、高质量的贡献参与进来！我们会积极关注issue与pull-requests(PR)。
+请阅读 [参与贡献](CONTRIBUTING.md) 与 [行为准则](CODE_OF_CONDUCT.md)
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+[license]: https://img.shields.io/github/license/Trinoooo/eggie_kv
+[doc-img]: https://img.shields.io/badge/reference-reference?logo=go&labelColor=gray&color=blue&link=https%3A%2F%2Fpkg.go.dev%2Fgithub.com%2FTrinoooo%2Feggie_kv
+[doc]: https://pkg.go.dev/github.com/Trinoooo/eggie_kv
+[ci-img]: https://github.com/Trinoooo/eggie_kv/actions/workflows/test.yaml/badge.svg
+[ci]: https://github.com/Trinoooo/eggie_kv/actions/workflows/test.yaml
+[cov-img]: https://codecov.io/gh/Trinoooo/eggie_kv/graph/badge.svg?token=A86TGA8XOE
+[cov]: https://codecov.io/gh/Trinoooo/eggie_kv
+[chat-img]: https://img.shields.io/discord/1207634458497257522?logo=discord
+[chat]: https://discord.gg/nbcTFntF
+[contributor-img]: https://img.shields.io/github/all-contributors/Trinoooo/eggie_kv?color=ee8449&style=flat-square

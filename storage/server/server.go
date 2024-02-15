@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/Trinoooo/eggie_kv/consts"
+	"github.com/Trinoooo/eggie_kv/errs"
 	"github.com/Trinoooo/eggie_kv/storage/core"
 	"github.com/Trinoooo/eggie_kv/storage/core/iface"
+	"github.com/Trinoooo/eggie_kv/storage/logs"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"io"
@@ -55,7 +57,7 @@ func (srv *Server) Server(resp http.ResponseWriter, req *http.Request) {
 	handler, ok := srv.operatorHandlers[kvReq.OperationType]
 	if !ok {
 		log.Warn("unsupported operation type:", kvReq.OperationType)
-		_, _ = resp.Write(mustMarshalKvResp(newExceptionResp(consts.UnsupportedOperatorTypeErr)))
+		_, _ = resp.Write(mustMarshalKvResp(newExceptionResp(errs.NewUnsupportedOperatorTypeErr())))
 		return
 	}
 
@@ -83,10 +85,15 @@ func (srv *Server) withMiddleware(mw ...MiddlewareFunc) {
 }
 
 func (srv *Server) withCore() error {
-	coreBuilder := core.BuilderMap[srv.config.GetString(consts.Core)]
+	coreBuilder, exist := core.BuilderMap[srv.config.GetString(consts.Core)]
+	if !exist {
+		e := errs.NewCoreNotFoundErr()
+		logs.Error(e.Error())
+		return e
+	}
 	c, err := coreBuilder(srv.config)
 	if err != nil {
-		return consts.BuildCoreErr
+		return err
 	}
 	srv.core = c
 	return nil
@@ -109,8 +116,9 @@ func parseKvReq(req *http.Request) (*consts.KvRequest, error) {
 
 	bodyBytes, err := io.ReadAll(req.Body)
 	if err = json.Unmarshal(bodyBytes, kvReq); err != nil {
-		log.Error("json unmarshal errs:", err)
-		return nil, consts.JsonUnmarshalErr
+		e := errs.NewJsonUnmarshalErr().WithErr(err)
+		logs.Error(e.Error())
+		return nil, e
 	}
 
 	return kvReq, nil
@@ -126,7 +134,7 @@ func mustMarshalKvResp(resp *consts.KvResponse) []byte {
 }
 
 func newExceptionResp(err error) *consts.KvResponse {
-	var kvErr = consts.UnexpectErr
+	var kvErr = errs.NewUnknownErr()
 	errors.As(err, &kvErr)
 	return &consts.KvResponse{
 		Code:    kvErr.Code(),

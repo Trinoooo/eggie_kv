@@ -1,6 +1,6 @@
 package consts
 
 const (
-	Params = "params"
-	Value  = "value"
+	LogFieldParams = "params"
+	LogFieldValue  = "value"
 )

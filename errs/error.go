@@ -79,6 +79,7 @@ const (
 	FlockFileErrCode               = 100032
 	CreateTempFileErrCode          = 100033
 	CopyFileErrCode                = 100034
+	CoreNotFoundErrCode            = 100035
 )
 
 func NewUnknownErr() *KvErr {
@@ -223,4 +224,8 @@ func NewCreateTempFileErr() *KvErr {
 
 func NewCopyFileErr() *KvErr {
 	return &KvErr{msg: "copy file failed", code: CopyFileErrCode}
+}
+
+func NewCoreNotFoundErr() *KvErr {
+	return &KvErr{msg: "core not found", code: CoreNotFoundErrCode}
 }

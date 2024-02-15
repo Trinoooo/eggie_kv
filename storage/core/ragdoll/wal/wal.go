@@ -151,32 +151,32 @@ func (opts *Options) check() error {
 	// note：暂时不考虑特殊权限位
 	if opts.dataPerm <= 0 || opts.dataPerm > 0777 {
 		e := errs.NewInvalidParamErr()
-		logs.Error(e.Error(), zap.String(consts.Params, "opts.dataPerm"), zap.Uint32(consts.Value, uint32(opts.dataPerm)))
+		logs.Error(e.Error(), zap.String(consts.LogFieldParams, "opts.dataPerm"), zap.Uint32(consts.LogFieldValue, uint32(opts.dataPerm)))
 		return e
 	}
 
 	if opts.dirPerm <= 0 || opts.dirPerm > 0777 {
 		e := errs.NewInvalidParamErr()
-		logs.Error(e.Error(), zap.String(consts.Params, "opts.dirPerm"), zap.Uint32(consts.Value, uint32(opts.dirPerm)))
+		logs.Error(e.Error(), zap.String(consts.LogFieldParams, "opts.dirPerm"), zap.Uint32(consts.LogFieldValue, uint32(opts.dirPerm)))
 		return e
 	}
 
 	if opts.segmentCacheCapacity < 0 {
 		e := errs.NewInvalidParamErr()
-		logs.Error(e.Error(), zap.String(consts.Params, "opts.segmentCacheCapacity"), zap.Int(consts.Value, opts.segmentCacheCapacity))
+		logs.Error(e.Error(), zap.String(consts.LogFieldParams, "opts.segmentCacheCapacity"), zap.Int(consts.LogFieldValue, opts.segmentCacheCapacity))
 		return e
 	}
 
 	// 这个范围主要是出于性能考虑，segment文件太小会导致频繁开关文件，segment文件太大会有性能问题（占内存过大，频繁缺页等）
 	if opts.segmentCapacity < consts.MB || opts.segmentCapacity > consts.GB {
 		e := errs.NewInvalidParamErr()
-		logs.Error(e.Error(), zap.String(consts.Params, "opts.segmentCapacity"), zap.Int64(consts.Value, opts.segmentCapacity))
+		logs.Error(e.Error(), zap.String(consts.LogFieldParams, "opts.segmentCapacity"), zap.Int64(consts.LogFieldValue, opts.segmentCapacity))
 		return e
 	}
 
 	if opts.syncInterval < 0 {
 		e := errs.NewInvalidParamErr()
-		logs.Error(e.Error(), zap.String(consts.Params, "opts.syncInterval"), zap.Duration(consts.Value, opts.syncInterval))
+		logs.Error(e.Error(), zap.String(consts.LogFieldParams, "opts.syncInterval"), zap.Duration(consts.LogFieldValue, opts.syncInterval))
 		return e
 	}
 	return nil
@@ -315,7 +315,7 @@ func (wal *Log) checkOrInitDir() error {
 
 	if !stat.IsDir() {
 		e := errs.NewInvalidParamErr()
-		logs.Error(e.Error(), zap.String(consts.Params, "stat"), zap.Any(consts.Value, stat))
+		logs.Error(e.Error(), zap.String(consts.LogFieldParams, "stat"), zap.Any(consts.LogFieldValue, stat))
 		return e
 	}
 
@@ -916,7 +916,7 @@ func (wal *Log) checkRange(idxs ...int64) error {
 		// 认为idx比 firstBlockIdx 小或者idx比 lastBlockIdx 时参数非法
 		if wal.firstBlockIdx <= wal.lastBlockIdx && (idx < wal.firstBlockIdx || idx > wal.lastBlockIdx) {
 			e := errs.NewInvalidParamErr()
-			logs.Error(e.Error(), zap.String(consts.Params, "idxs"), zap.Int64s(consts.Value, idxs))
+			logs.Error(e.Error(), zap.String(consts.LogFieldParams, "idxs"), zap.Int64s(consts.LogFieldValue, idxs))
 			return e
 		}
 
@@ -924,7 +924,7 @@ func (wal *Log) checkRange(idxs ...int64) error {
 		// 此时认为idx在 lastBlockIdx 与 firstBlockIdx 之间为非法情况
 		if wal.firstBlockIdx > wal.lastBlockIdx && (wal.lastBlockIdx < idx && idx < wal.firstBlockIdx) {
 			e := errs.NewInvalidParamErr()
-			logs.Error(e.Error(), zap.String(consts.Params, "idxs"), zap.Int64s(consts.Value, idxs))
+			logs.Error(e.Error(), zap.String(consts.LogFieldParams, "idxs"), zap.Int64s(consts.LogFieldValue, idxs))
 			return e
 		}
 	}
@@ -938,7 +938,7 @@ func (wal *Log) checkDataSize(data []byte) error {
 	lengthOfData := int64(len(data))
 	if lengthOfData == 0 || lengthOfData > wal.opts.segmentCapacity {
 		e := errs.NewInvalidParamErr()
-		logs.Error(e.Error(), zap.String(consts.Params, "lengthOfData"), zap.Int64(consts.Value, lengthOfData))
+		logs.Error(e.Error(), zap.String(consts.LogFieldParams, "lengthOfData"), zap.Int64(consts.LogFieldValue, lengthOfData))
 		return e
 	}
 	return nil
