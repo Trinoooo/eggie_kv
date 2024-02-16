@@ -1,7 +1,7 @@
 name: Page
 
 on:
-  pull_request:
+  push:
     branches:
       - main # default branch
 
