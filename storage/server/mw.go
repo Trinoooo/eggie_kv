@@ -15,9 +15,9 @@ type MiddlewareFunc func(handleFn HandleFunc) HandleFunc
 
 func LogMw(handleFn HandleFunc) HandleFunc {
 	return func(req *consts.KvRequest) (*consts.KvResponse, error) {
-		logs.Info(fmt.Sprintf("req: %#.all-contributorsrc", render.Render(req)))
+		logs.Info(fmt.Sprintf("req: %#v", render.Render(req)))
 		resp, err := handleFn(req)
-		logs.Info(fmt.Sprintf("resp: %#.all-contributorsrc, errs: %#.all-contributorsrc", render.Render(resp), err))
+		logs.Info(fmt.Sprintf("resp: %#v, errs: %#v", render.Render(resp), err))
 		return resp, err
 	}
 }

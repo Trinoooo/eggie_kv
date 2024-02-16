@@ -31,10 +31,6 @@ func (r *Record) signature() [16]byte {
 	return md5.Sum(append(append(buffer, []byte(r.Key)...), r.Value...))
 }
 
-func (r *Record) checkIntegrity() bool {
-	return r.CheckSum == r.signature()
-}
-
 // Data 磁盘中的数据文件
 type Data struct {
 	Fd  *os.File

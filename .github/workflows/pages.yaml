@@ -1,10 +1,9 @@
 name: Page
 
 on:
-  push:
+  pull_request:
     branches:
       - main # default branch
-      - doc/restart # test
 
 jobs:
   build:
