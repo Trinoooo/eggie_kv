@@ -80,6 +80,8 @@ const (
 	CreateTempFileErrCode          = 100033
 	CopyFileErrCode                = 100034
 	CoreNotFoundErrCode            = 100035
+	ReadSocketErrCode              = 100036
+	WriteSocketErrCode             = 100037
 )
 
 func NewUnknownErr() *KvErr {
@@ -228,4 +230,12 @@ func NewCopyFileErr() *KvErr {
 
 func NewCoreNotFoundErr() *KvErr {
 	return &KvErr{msg: "core not found", code: CoreNotFoundErrCode}
+}
+
+func NewReadSocketErr() *KvErr {
+	return &KvErr{msg: "read socket failed", code: ReadSocketErrCode}
+}
+
+func NewWriteSocketErr() *KvErr {
+	return &KvErr{msg: "write socket failed", code: WriteSocketErrCode}
 }

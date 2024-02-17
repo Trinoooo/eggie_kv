@@ -28,7 +28,7 @@ func TestCheckAndCreateFile(t *testing.T) {
 		},
 		{
 			Description: "abs path & dir exist & not have dir permission",
-			Path:        fmt.Sprintf("/tmp/eggie_kv/test_data/f4"),
+			Path:        "/tmp/eggie_kv/test_data/f4",
 		},
 	}
 

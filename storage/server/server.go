@@ -3,12 +3,12 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/Trinoooo/eggie_kv/consts"
 	"github.com/Trinoooo/eggie_kv/errs"
 	"github.com/Trinoooo/eggie_kv/storage/core"
 	"github.com/Trinoooo/eggie_kv/storage/core/iface"
 	"github.com/Trinoooo/eggie_kv/storage/logs"
-	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"io"
 	"net/http"
@@ -49,14 +49,14 @@ func NewServer() (*Server, error) {
 func (srv *Server) Server(resp http.ResponseWriter, req *http.Request) {
 	kvReq, err := parseKvReq(req)
 	if err != nil {
-		log.Error("parse kvReq errs:", err)
+		logs.Error(fmt.Sprintf("parse kvReq errs: %#v", err))
 		_, _ = resp.Write(mustMarshalKvResp(newExceptionResp(err)))
 		return
 	}
 
 	handler, ok := srv.operatorHandlers[kvReq.OperationType]
 	if !ok {
-		log.Warn("unsupported operation type:", kvReq.OperationType)
+		logs.Warn(fmt.Sprintf("unsupported operation type: %#v", kvReq.OperationType))
 		_, _ = resp.Write(mustMarshalKvResp(newExceptionResp(errs.NewUnsupportedOperatorTypeErr())))
 		return
 	}
@@ -68,7 +68,7 @@ func (srv *Server) Server(resp http.ResponseWriter, req *http.Request) {
 
 	kvResp, err := wrappedHandler(kvReq)
 	if err != nil {
-		log.Error("execute handle failed:", err)
+		logs.Error(fmt.Sprintf("execute handle failed: %#v", err))
 		_, _ = resp.Write(mustMarshalKvResp(newExceptionResp(err)))
 		return
 	}
@@ -115,6 +115,12 @@ func parseKvReq(req *http.Request) (*consts.KvRequest, error) {
 	kvReq := &consts.KvRequest{}
 
 	bodyBytes, err := io.ReadAll(req.Body)
+	if err != nil {
+		e := errs.NewReadSocketErr().WithErr(err)
+		logs.Error(e.Error())
+		return nil, e
+	}
+
 	if err = json.Unmarshal(bodyBytes, kvReq); err != nil {
 		e := errs.NewJsonUnmarshalErr().WithErr(err)
 		logs.Error(e.Error())
@@ -127,7 +133,6 @@ func parseKvReq(req *http.Request) (*consts.KvRequest, error) {
 func mustMarshalKvResp(resp *consts.KvResponse) []byte {
 	respBytes, err := json.Marshal(resp)
 	if err != nil {
-		log.Error("json marshal errs:", err)
 		panic(err)
 	}
 	return respBytes

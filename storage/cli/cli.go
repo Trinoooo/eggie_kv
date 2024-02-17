@@ -132,8 +132,9 @@ func (wrapper *Wrapper) withAction() {
 				log.Fatal(err)
 			}
 		}()
-		sig := make(chan os.Signal)
-		signal.Notify(sig, syscall.SIGINT, syscall.SIGKILL, syscall.SIGTERM)
+		// bugfix: 使用缓冲通道避免执行信号处理程序（下面的for）之前有信号到达会被丢弃
+		sig := make(chan os.Signal, 5)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		for range sig {
 			log.Info("shutdown...")
 		}
