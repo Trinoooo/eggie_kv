@@ -773,8 +773,9 @@ func (wal *Log) Truncate(idx int64) error {
 		return err
 	}
 
-	var segmentsTidy []*segment
+	segmentsToRemove := make(map[int64]*segment)
 	err = wal.traverseSegments(idx, func(seg *segment) (err error) {
+		cached := wal.segmentCache.Remove(seg.getStartBlockIdx())
 		opened := seg.isOpened()
 		if !opened {
 			err := seg.open(wal.opts.dataPerm)
@@ -790,14 +791,14 @@ func (wal *Log) Truncate(idx int64) error {
 
 		empty := seg.size() == 0
 		isActive := seg == wal.activeSegment
+		isCached := cached != nil
 		if empty && !isActive {
 			err := seg.remove()
 			if err != nil {
 				return err
 			}
 
-			// 被删除的segment从缓存中移除
-			wal.segmentCache.Remove(seg.getStartBlockIdx())
+			segmentsToRemove[seg.getStartBlockIdx()] = seg
 			return nil
 		}
 
@@ -808,14 +809,23 @@ func (wal *Log) Truncate(idx int64) error {
 			}
 		}
 
-		segmentsTidy = append(segmentsTidy, seg)
+		if isCached {
+			wal.segmentCache.Write(seg.getStartBlockIdx(), seg)
+		}
+
 		return nil
 	})
 	if err != nil {
 		return err
 	}
 
-	wal.segments = segmentsTidy
+	var segmentTidy []*segment
+	for _, seg := range wal.segments {
+		if segmentsToRemove[seg.getStartBlockIdx()] == nil {
+			segmentTidy = append(segmentTidy, seg)
+		}
+	}
+	wal.segments = segmentTidy
 	wal.firstBlockIdx = idx + 1
 	wal.isSegmentsOrdered = false
 	return nil

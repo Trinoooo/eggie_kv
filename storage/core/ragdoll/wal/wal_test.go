@@ -8,9 +8,77 @@ import (
 	"time"
 )
 
+/*
+-rwxr-x---   1 somebody  staff          0 Feb 17 20:47 .lock
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 00000000
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 00794375
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 01588750
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 02383125
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 03177500
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 03971875
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 04766250
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 05560625
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 06355000
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 07149375
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 07943750
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 08738125
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 09532500
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 10326875
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 11121250
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 11915625
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 12710000
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 13504375
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 14298750
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 15093125
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 15887500
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 16681875
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 17476250
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 18270625
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 19065000
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 19859375
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 20653750
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 21448125
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 22242500
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 23036875
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 23831250
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 24625625
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 25420000
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 26214375
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 27008750
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 27803125
+-rw-------   1 somebody  staff  104857500 Feb 17 20:47 28597500
+-rw-------   1 somebody  staff  104857105 Feb 17 20:47 29391875
+-rw-------   1 somebody  staff  104857571 Feb 17 20:47 30095575
+-rw-------   1 somebody  staff  104856798 Feb 17 20:47 30505027
+-rw-------   1 somebody  staff  104856622 Feb 17 20:47 30917049
+-rw-------   1 somebody  staff  104856841 Feb 17 20:47 31327486
+-rw-------   1 somebody  staff  104857445 Feb 17 20:47 31736170
+-rw-------   1 somebody  staff  104857586 Feb 17 20:47 32147996
+-rw-------   1 somebody  staff  104857470 Feb 17 20:48 32558850
+-rw-------   1 somebody  staff  104857404 Feb 17 20:48 32970689
+-rw-------   1 somebody  staff  104856787 Feb 17 20:48 33382542
+-rw-------   1 somebody  staff  104857572 Feb 17 20:48 33792700
+-rw-------   1 somebody  staff  104857292 Feb 17 20:48 34201817
+-rw-------   1 somebody  staff  104857190 Feb 17 20:48 34612449
+-rw-------   1 somebody  staff  104857132 Feb 17 20:48 35023381
+-rw-------   1 somebody  staff  104856862 Feb 17 20:48 35433646
+-rw-------   1 somebody  staff  104856736 Feb 17 20:48 35844151
+-rw-------   1 somebody  staff  104857300 Feb 17 20:48 36255033
+-rw-------   1 somebody  staff  104857129 Feb 17 20:48 36665039
+-rw-------   1 somebody  staff  104857563 Feb 17 20:48 37076868
+-rw-------   1 somebody  staff  104857121 Feb 17 20:49 37488228
+-rw-------   1 somebody  staff  104856871 Feb 17 20:49 37898101
+-rw-------   1 somebody  staff  104856810 Feb 17 20:49 38307691
+-rw-------   1 somebody  staff  104857591 Feb 17 20:49 38716437
+-rw-------   1 somebody  staff  104857464 Feb 17 20:49 39127826
+-rw-------   1 somebody  staff  104857013 Feb 17 20:49 39539275
+-rw-------   1 somebody  staff   12876944 Feb 17 20:49 39949750.active
+*/
+
 // testData
 // 测试写入和读取的日志内容
 // 写入内容体积分别为6、10、1、100、1000
+
 var testData = [][]byte{
 	{1, 3, 5, 2, 4, 6},
 	{1, 2, 3, 4, 5, 6, 7, 8, 9, 0},
@@ -133,6 +201,7 @@ var testData = [][]byte{
 
 // TestOptions_check_success
 // option各项配置设置在合法范围内，check能够通过
+
 func TestOptions_check_success(t *testing.T) {
 	opts := NewOptions().
 		SetDataPerm(0777).
@@ -150,6 +219,7 @@ func TestOptions_check_success(t *testing.T) {
 
 // TestOptions_check_failed
 // option各项配置设置在合法范围外，check无法通过
+
 func TestOptions_check_failed(t *testing.T) {
 	o1 := NewOptions().SetDataPerm(0)
 	err := o1.check()
@@ -202,6 +272,7 @@ func TestOptions_check_failed(t *testing.T) {
 
 // TestLog_Write_normal
 // * 写入3e7条数据，每条数据100字节大小
+
 func TestLog_Write_normal(t *testing.T) {
 	segmentSize := 100 * consts.MB
 	opts := NewOptions().
@@ -230,6 +301,7 @@ func TestLog_Write_normal(t *testing.T) {
 
 // TestLog_Write_abnormal
 // 写入1e7条数据，每条数据大小不固定
+
 func TestLog_Write_abnormal(t *testing.T) {
 	segmentSize := 100 * consts.MB
 	opts := NewOptions().
@@ -259,6 +331,7 @@ func TestLog_Write_abnormal(t *testing.T) {
 
 // TestLog_Write_failed
 // 写入数据不合法，写入失败
+
 func TestLog_Write_failed(t *testing.T) {
 	segmentSize := 100 * consts.MB
 	opts := NewOptions().
@@ -287,6 +360,7 @@ func TestLog_Write_failed(t *testing.T) {
 // * 重复读同一个segment
 // * lru
 // * 读activeSegment
+
 func TestLog_Read(t *testing.T) {
 	wal, err := Open("../../../../test_data/wal/", nil)
 	if err != nil {
@@ -294,13 +368,15 @@ func TestLog_Read(t *testing.T) {
 	}
 
 	readIdxList := []int64{
-		3000000,
-		3000000,
-		6000000,
-		7000000,
-		9000000,
-		12000000,
-		29400000,
+		0,        // 第一个segment第一个
+		0,        // 重复读
+		700000,   // 第一个segment中间
+		794374,   // 第一个segment的最后一个
+		794375,   // 第二个segment的第一个
+		30095575, // 中间随便一个segment的第一个
+		30099999, // 中间随便一个segment中间
+		30505026, // 中间随便一个segment的最后一个
+		39949750, // activeSegment中的第一个
 	}
 
 	for _, idx := range readIdxList {
@@ -320,6 +396,7 @@ func TestLog_Read(t *testing.T) {
 
 // TestLog_Read_failed
 // 尝试读取一个有效范围外的日志
+
 func TestLog_Read_failed(t *testing.T) {
 	wal, err := Open("../../../../test_data/wal/", nil)
 	if err != nil {
@@ -339,6 +416,7 @@ func TestLog_Read_failed(t *testing.T) {
 
 // TestLog_Sync
 // * opt设置不主动刷盘，日志持久化的时机只有单数据文件满以及主动调用wal.Sync
+
 func TestLog_Sync(t *testing.T) {
 	segmentSize := 100 * consts.MB
 	opts := NewOptions().
@@ -372,16 +450,28 @@ func TestLog_Truncate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = wal.Truncate(3000000)
-	if err != nil {
-		t.Fatal(err)
+	truncateIdxList := []int64{
+		0,        // 第一个segment第一个
+		700000,   // 第一个segment中间
+		794374,   // 第一个segment的最后一个
+		794375,   // 第二个segment的第一个
+		30095575, // 中间随便一个segment的第一个
+		30099999, // 中间随便一个segment中间
+		30505026, // 中间随便一个segment的最后一个
+		39949750, // activeSegment中的第一个
 	}
+	for _, idx := range truncateIdxList {
+		err = wal.Truncate(idx)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	l, err := wal.Len()
-	if err != nil {
-		t.Error(err)
+		l, err := wal.Len()
+		if err != nil {
+			t.Error(err)
+		}
+		t.Log(l)
 	}
-	t.Log(l)
 
 	err = wal.Close()
 	if err != nil {
@@ -389,13 +479,8 @@ func TestLog_Truncate(t *testing.T) {
 	}
 }
 
-func TestLog_TruncateAgain(t *testing.T) {
+func TestLog_OpenAgain(t *testing.T) {
 	wal, err := Open("../../../../test_data/wal/", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = wal.Truncate(29400000)
 	if err != nil {
 		t.Fatal(err)
 	}

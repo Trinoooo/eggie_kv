@@ -121,7 +121,6 @@ func (seg *segment) isOpened() bool {
 
 // getStartBlockIdx 获取 segment 文件的起始 blockIdx
 // 注意：起始 blockIdx 不等价于 第一个 blockIdx，因为 segment 文件可能为空
-// 这个方法是供外部调用，内部请直接使用 startBlockIdx
 // 需要外部保证线程安全
 func (seg *segment) getStartBlockIdx() int64 {
 	if seg.startBlockIdx != nil {
@@ -138,7 +137,6 @@ func (seg *segment) close() error {
 	if err != nil {
 		return err
 	}
-	seg.opened = false
 
 	err = seg.sync()
 	if err != nil {
@@ -156,6 +154,7 @@ func (seg *segment) close() error {
 	seg.fd = nil
 	seg.bbuf = nil
 	seg.bpos = nil
+	seg.opened = false
 	return nil
 }
 
@@ -205,7 +204,7 @@ func (seg *segment) sync() error {
 		return nil
 	}
 
-	err = seg.copyOnWrite()
+	err = seg.copyOnWrite(true)
 	if err != nil {
 		return err
 	}
@@ -223,7 +222,7 @@ func (seg *segment) read(idx int64) (map[int64][]byte, error) {
 	}
 
 	blockIdxToData := make(map[int64][]byte)
-	border := idx - *seg.startBlockIdx
+	border := idx - seg.getStartBlockIdx()
 	if idx < seg.firstBlockIdx || idx > seg.lastBlockIdx {
 		border = int64(len(seg.bpos)) - 1
 	}
@@ -244,17 +243,15 @@ func (seg *segment) read(idx int64) (map[int64][]byte, error) {
 // 如果idx超过 segment 文件容纳的block数量，该文件会被截断成空文件
 // 需要外部保证线程安全
 func (seg *segment) truncate(idx int64) error {
-	if idx < seg.firstBlockIdx || idx > seg.lastBlockIdx {
+	if idx < seg.firstBlockIdx || idx >= seg.lastBlockIdx {
 		seg.bpos = make([]*position, 0, consts.KB)
 		seg.bbuf = make([]byte, 0, seg.maxSize)
 		seg.bbufSyncIdx = 0
 	} else {
 		seg.firstBlockIdx = idx + 1
-		seg.bpos = seg.bpos[seg.firstBlockIdx-*seg.startBlockIdx:]
+		seg.bpos = seg.bpos[seg.firstBlockIdx-seg.getStartBlockIdx():]
 		seg.bbuf = seg.bbuf[seg.bpos[0].start:] // 前面的判断保证这里取seg.bpos[0]不会有问题
-		// 下面会完全截断，所以从0开始同步buf内容
 		seg.bbufSyncIdx = 0
-		// 由于segment文件由起始blockId命名，因此需要重命名
 		oldPath := seg.path
 		seg.path = filepath.Join(filepath.Dir(seg.path), blockIdToBase(seg.firstBlockIdx, seg.hasSuffix))
 		err := os.Rename(oldPath, seg.path)
@@ -263,9 +260,10 @@ func (seg *segment) truncate(idx int64) error {
 			logs.Error(e.Error())
 			return e
 		}
+		seg.startBlockIdx = nil
 	}
 
-	err := seg.sync()
+	err := seg.copyOnWrite(false)
 	if err != nil {
 		return err
 	}
@@ -323,7 +321,7 @@ func (seg *segment) checkState() error {
 	return nil
 }
 
-func (seg *segment) copyOnWrite() error {
+func (seg *segment) copyOnWrite(copy bool) error {
 	dir, base := filepath.Dir(seg.path), filepath.Base(seg.path)
 	tempFile, err := os.CreateTemp(dir, base)
 	if err != nil {
@@ -340,11 +338,13 @@ func (seg *segment) copyOnWrite() error {
 		return e
 	}
 
-	_, err = io.Copy(tempFile, seg.fd)
-	if err != nil {
-		e := errs.NewCopyFileErr().WithErr(err)
-		logs.Error(e.Error())
-		return e
+	if copy {
+		_, err = io.Copy(tempFile, seg.fd)
+		if err != nil {
+			e := errs.NewCopyFileErr().WithErr(err)
+			logs.Error(e.Error())
+			return e
+		}
 	}
 
 	err = seg.fd.Close()
@@ -376,6 +376,7 @@ func (seg *segment) copyOnWrite() error {
 	}
 	seg.bbufSyncIdx = int64(len(seg.bbuf))
 	seg.fd = tempFile
+	seg.startBlockIdx = nil
 	return nil
 }
 
