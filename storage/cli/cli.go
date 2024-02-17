@@ -6,7 +6,6 @@ import (
 	"github.com/Trinoooo/eggie_kv/errs"
 	"github.com/Trinoooo/eggie_kv/storage/core/ragdoll/logs"
 	"github.com/Trinoooo/eggie_kv/storage/server"
-	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/zap"
 	"net/http"
@@ -129,14 +128,14 @@ func (wrapper *Wrapper) withAction() {
 			addr := fmt.Sprintf("%s:%d", ctx.String("host"), ctx.Int64("port"))
 			if err := http.ListenAndServe(addr, nil); err != nil {
 				// 父协程没recover也会一起panic，导致程序崩溃
-				log.Fatal(err)
+				logs.Fatal(err.Error())
 			}
 		}()
 		// bugfix: 使用缓冲通道避免执行信号处理程序（下面的for）之前有信号到达会被丢弃
 		sig := make(chan os.Signal, 5)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		for range sig {
-			log.Info("shutdown...")
+			logs.Info("shutdown...")
 		}
 		return nil
 	}

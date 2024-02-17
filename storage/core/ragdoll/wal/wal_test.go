@@ -1,7 +1,6 @@
 package wal
 
 import (
-	"bytes"
 	"github.com/Trinoooo/eggie_kv/consts"
 	"github.com/Trinoooo/eggie_kv/errs"
 	"math/rand"
@@ -305,46 +304,12 @@ func TestLog_Read(t *testing.T) {
 	}
 
 	for _, idx := range readIdxList {
-		data, err := wal.Read(idx)
+		blockIdxToData, err := wal.Read(idx)
 		if err != nil {
 			t.Error(err)
 		}
 
-		if !bytes.Equal(data, testData[3]) {
-			t.Errorf("expect %#v got %#v", testData[3], data)
-		}
-	}
-
-	err = wal.Close()
-	if err != nil {
-		t.Error(err)
-	}
-}
-
-// TestLog_MRead 批量读日志
-func TestLog_MRead(t *testing.T) {
-	wal, err := Open("../../../../test_data/wal/", nil)
-	if err != nil {
-		t.Error(err)
-	}
-
-	readIdxList := []int64{
-		3000000,
-		3000000,
-		6000000,
-		7000000,
-		9000000,
-		12000000,
-		29400000,
-	}
-
-	for _, idx := range readIdxList {
-		data, err := wal.MRead(idx)
-		if err != nil {
-			t.Error(err)
-		}
-
-		t.Log(len(data))
+		t.Log(len(blockIdxToData))
 	}
 
 	err = wal.Close()
@@ -361,8 +326,8 @@ func TestLog_Read_failed(t *testing.T) {
 		t.Error(err)
 	}
 
-	_, err = wal.Read(999999999999)
-	if err != nil && errs.GetCode(err) != errs.InvalidParamErrCode {
+	_, err = wal.Read(-1)
+	if err != nil && errs.GetCode(err) != errs.NotFoundErrCode {
 		t.Error(err)
 	}
 

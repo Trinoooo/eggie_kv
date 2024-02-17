@@ -1,12 +1,15 @@
 package utils
 
 import (
-	"github.com/Trinoooo/eggie_kv/consts"
 	"os"
 )
 
+func Env() string {
+	return os.Getenv("EGGIE_KV_ENV")
+}
+
 func IsTest() bool {
-	return os.Getenv(consts.Env) == "test"
+	return Env() == "test"
 }
 
 func GetValueOnEnv(prod, test interface{}) interface{} {
