@@ -640,6 +640,36 @@ func TestLog_WriteNormalToFull(t *testing.T) {
 	}
 }
 
+// TestLog_ReadCycleInvalid 出现循环写日志之后，尝试读lastBlockIdx与firstBlockIdx之间的非法记录
+func TestLog_ReadCycleInvalid(t *testing.T) {
+	err := os.Remove("../../../../test_data/wal/20000000")
+	if err != nil {
+		t.Error(err)
+	}
+
+	segmentSize := 100 * consts.MB
+	opts := NewOptions().
+		SetDirPerm(0770).
+		SetDataPerm(0660).
+		SetSegmentCacheSize(5).
+		SetSegmentCapacity(int64(segmentSize)).
+		SetNoSync()
+	wal, err := Open("../../../../test_data/wal/", opts)
+	if err != nil {
+		t.Error(err)
+	}
+
+	_, err = wal.Read(20000001)
+	if err != nil {
+		t.Log(err)
+	}
+
+	err = wal.Close()
+	if err != nil {
+		t.Error(err)
+	}
+}
+
 func BenchmarkWal_Write_6byte(b *testing.B) {
 	benchmarkInner(b, testData[0])
 }
