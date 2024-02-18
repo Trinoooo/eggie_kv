@@ -3,6 +3,7 @@ package wal
 import (
 	"github.com/Trinoooo/eggie_kv/consts"
 	"github.com/Trinoooo/eggie_kv/errs"
+	"github.com/Trinoooo/eggie_kv/utils"
 	"math/rand"
 	"os"
 	"testing"
@@ -518,13 +519,13 @@ func TestLog_OpenWithDuplicateActiveSegment(t *testing.T) {
 	}
 }
 
-/*// TestLog_Corrupt 测试文件内容损坏
+// TestLog_Corrupt 测试文件内容损坏
 func TestLog_Corrupt(t *testing.T) {
 	corrupt, err := utils.CheckAndCreateFile("../../../../test_data/wal/00000000.active", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0660)
 	if err != nil {
 		t.Error(err)
 	}
-	zeroI64 := []byte{0, 10, 0, 0, 0, 0, 0, 0}
+	zeroI64 := []byte{120, 0, 0, 0, 0, 0, 0, 0}
 	// 读入数据比header尺寸小
 	_, err = corrupt.Write(zeroI64)
 	if err != nil {
@@ -553,10 +554,10 @@ func TestLog_Corrupt(t *testing.T) {
 
 	// checksum不匹配
 	var tt []byte
-	for i := 0; i <= 20; i++ {
+	for i := 0; i <= 200; i++ {
 		tt = append(tt, zeroI64...)
 	}
-	_, err = corrupt.Write(zeroI64)
+	_, err = corrupt.Write(tt)
 	if err != nil {
 		t.Error(err)
 	}
@@ -565,7 +566,12 @@ func TestLog_Corrupt(t *testing.T) {
 	if err != nil {
 		t.Log(err)
 	}
-}*/
+
+	err = os.Remove("../../../../test_data/wal/00000000.active")
+	if err != nil {
+		t.Error(err)
+	}
+}
 
 // TestLog_Sync 同步磁盘
 func TestLog_Sync(t *testing.T) {

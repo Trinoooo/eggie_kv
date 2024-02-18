@@ -1,9 +1,4 @@
 {
-<<<<<<< HEAD
-  "projectName": "<insert the repo's name>",
-  "projectOwner": "<insert the repo's owner/orgs>"
-}
-=======
   "files": [
     "README.md"
   ],
@@ -33,4 +28,3 @@
   "projectName": "eggie_kv",
   "projectOwner": "Trinoooo"
 }
->>>>>>> main
