@@ -427,7 +427,7 @@ func (wal *Log) loadSegments() error {
 	err = activeSegment.open(wal.opts.dataPerm)
 	if err != nil {
 		// todo：调研 损坏恢复
-		if errors.Is(err, errs.NewCorruptErr()) {
+		if errs.GetCode(err) == errs.CorruptErrCode {
 			wal.corrupted = true
 		}
 		return err

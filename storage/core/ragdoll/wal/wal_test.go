@@ -575,6 +575,11 @@ func TestLog_Corrupt(t *testing.T) {
 
 // TestLog_Sync 同步磁盘
 func TestLog_Sync(t *testing.T) {
+	_, err := os.Create("../../../../test_data/wal/20000000.active")
+	if err != nil {
+		t.Error(err)
+	}
+
 	segmentSize := 100 * consts.MB
 	opts := NewOptions().
 		SetSegmentCapacity(int64(segmentSize))
