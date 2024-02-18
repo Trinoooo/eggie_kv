@@ -67,13 +67,19 @@ type segment struct {
 	opened bool // opened 文件是否已经打开
 }
 
-func newSegment(path string, maxSize int64) *segment {
+func newSegment(path string, maxSize int64) (*segment, error) {
 	seg := &segment{}
 	seg.path = path
 	seg.maxSize = maxSize
 	seg.firstBlockIdx = -1
 	seg.lastBlockIdx = -1
-	return seg
+	startBlockIdx, hasSuffix, err := baseToBlockId(filepath.Base(seg.path))
+	if err != nil {
+		return nil, err
+	}
+	seg.startBlockIdx = &startBlockIdx
+	seg.hasSuffix = hasSuffix
+	return seg, nil
 }
 
 // open 打开segment
@@ -101,16 +107,10 @@ func (seg *segment) open(perm os.FileMode) error {
 	seg.bbuf = bbf
 	seg.bpos = bps
 	seg.bbufSyncIdx = int64(len(seg.bbuf))
-	startBlockIdx, hasSuffix, err := baseToBlockId(filepath.Base(seg.path))
-	if err != nil {
-		return err
-	}
-	seg.startBlockIdx = &startBlockIdx
 	if lengthOfBpos := int64(len(seg.bpos)); lengthOfBpos > 0 {
-		seg.firstBlockIdx = startBlockIdx
+		seg.firstBlockIdx = seg.getStartBlockIdx()
 		seg.lastBlockIdx = seg.firstBlockIdx + lengthOfBpos - 1
 	}
-	seg.hasSuffix = hasSuffix
 	seg.opened = true
 	return nil
 }
@@ -242,28 +242,36 @@ func (seg *segment) read(idx int64) (map[int64][]byte, error) {
 // 如果执行成功会截断 segment 文件中 [firstBlockIdx, idx] 范围数据
 // 如果idx超过 segment 文件容纳的block数量，该文件会被截断成空文件
 // 需要外部保证线程安全
-func (seg *segment) truncate(idx int64) error {
+func (seg *segment) truncate(idx int64) (err error) {
 	if idx < seg.firstBlockIdx || idx >= seg.lastBlockIdx {
 		seg.bpos = make([]*position, 0, consts.KB)
 		seg.bbuf = make([]byte, 0, seg.maxSize)
-		seg.bbufSyncIdx = 0
+		seg.firstBlockIdx = -1
+		seg.lastBlockIdx = -1
 	} else {
 		seg.firstBlockIdx = idx + 1
 		seg.bpos = seg.bpos[seg.firstBlockIdx-seg.getStartBlockIdx():]
 		seg.bbuf = seg.bbuf[seg.bpos[0].start:] // 前面的判断保证这里取seg.bpos[0]不会有问题
-		seg.bbufSyncIdx = 0
+		// note: 这里rename可能导致不一致问题
+		// 即原文件内容没有被截断，但是文件名被修改成截断后的
 		oldPath := seg.path
-		seg.path = filepath.Join(filepath.Dir(seg.path), blockIdToBase(seg.firstBlockIdx, seg.hasSuffix))
-		err := os.Rename(oldPath, seg.path)
-		if err != nil {
-			e := errs.NewRenameFileErr().WithErr(err)
-			logs.Error(e.Error())
-			return e
-		}
-		seg.startBlockIdx = nil
-	}
+		defer func() {
+			if err != nil {
+				return
+			}
 
-	err := seg.copyOnWrite(false)
+			err = os.Remove(oldPath)
+			if err != nil {
+				e := errs.NewRemoveFileErr().WithErr(err)
+				logs.Error(e.Error())
+				err = e
+			}
+		}()
+		seg.path = filepath.Join(filepath.Dir(seg.path), blockIdToBase(seg.firstBlockIdx, seg.hasSuffix))
+	}
+	seg.bbufSyncIdx = 0
+
+	err = seg.copyOnWrite(false)
 	if err != nil {
 		return err
 	}

@@ -253,6 +253,17 @@ func Open(dirPath string, opts *Options) (_ *Log, err error) {
 		}()
 	}
 
+	// 打开wal过程出现错误，需要释放目录锁
+	defer func() {
+		if err != nil {
+			err = syscall.Flock(int(wal.dirLockFile.Fd()), syscall.LOCK_UN)
+			if err != nil {
+				e := errs.NewFlockFileErr().WithErr(err)
+				logs.Error(e.Error())
+			}
+		}
+	}()
+
 	err = wal.init()
 	if err != nil {
 		return nil, err
@@ -295,7 +306,8 @@ func (wal *Log) init() error {
 func (wal *Log) checkOrInitDir() error {
 	stat, err := os.Stat(wal.dirPath)
 	if errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(wal.dirPath, wal.opts.dirPerm); err != nil {
+		err = os.MkdirAll(wal.dirPath, wal.opts.dirPerm)
+		if err != nil {
 			e := errs.NewMkdirErr().WithErr(err)
 			logs.Error(e.Error())
 			return e
@@ -346,8 +358,7 @@ func (wal *Log) lockDir() error {
 // 装载 wal.segments 与 wal.activeSegments
 func (wal *Log) loadSegments() error {
 	var activeSegment *segment
-	var err error
-	if err = filepath.WalkDir(wal.dirPath, func(path string, de fs.DirEntry, err error) error {
+	err := filepath.WalkDir(wal.dirPath, func(path string, de fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -367,7 +378,10 @@ func (wal *Log) loadSegments() error {
 			return nil
 		}
 
-		currentSegment := newSegment(filepath.Join(wal.dirPath, de.Name()), wal.opts.segmentCapacity)
+		currentSegment, err := newSegment(filepath.Join(wal.dirPath, de.Name()), wal.opts.segmentCapacity)
+		if err != nil {
+			return err
+		}
 		wal.segments = append(wal.segments, currentSegment)
 		firstBlockIdOfSegment, hasSuffix, err := baseToBlockId(de.Name())
 		if err != nil {
@@ -394,16 +408,19 @@ func (wal *Log) loadSegments() error {
 			}
 		}
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
 		e := errs.NewWalkDirErr().WithErr(err)
 		logs.Error(e.Error())
 		return e
 	}
 
-	// 目录下没有segment的情况
-	// 首次启动 & truncate
+	// 首次启动目录下没有segment
 	if activeSegment == nil {
-		activeSegment = newSegment(filepath.Join(wal.dirPath, blockIdToBase(0, true)), wal.opts.segmentCapacity)
+		activeSegment, err = newSegment(filepath.Join(wal.dirPath, blockIdToBase(0, true)), wal.opts.segmentCapacity)
+		if err != nil {
+			return err
+		}
 		wal.segments = append(wal.segments, activeSegment)
 	}
 	wal.activeSegment = activeSegment
@@ -587,7 +604,10 @@ func (wal *Log) Write(data []byte) (int64, error) {
 				return 0, err
 			}
 
-			nextActiveSegment := newSegment(filepath.Join(wal.dirPath, blockIdToBase(wal.lastBlockIdx, true)), wal.opts.segmentCapacity)
+			nextActiveSegment, err := newSegment(filepath.Join(wal.dirPath, blockIdToBase(wal.lastBlockIdx, true)), wal.opts.segmentCapacity)
+			if err != nil {
+				return 0, err
+			}
 			wal.segments = append(wal.segments, nextActiveSegment)
 			wal.isSegmentsOrdered = false
 			err = nextActiveSegment.open(wal.opts.dataPerm)
@@ -827,6 +847,11 @@ func (wal *Log) Truncate(idx int64) error {
 	}
 	wal.segments = segmentTidy
 	wal.firstBlockIdx = idx + 1
+	// 把目录下所有日志全部截断，需要重置 seg.firstBlockIdx 与 seg.lastBlockIdx
+	if wal.firstBlockIdx > wal.lastBlockIdx {
+		wal.firstBlockIdx = -1
+		wal.lastBlockIdx = -1
+	}
 	wal.isSegmentsOrdered = false
 	return nil
 }
