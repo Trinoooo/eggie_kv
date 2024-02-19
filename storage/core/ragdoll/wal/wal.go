@@ -16,32 +16,14 @@ import (
 	"time"
 )
 
-// 核心概念：
-// · wal_dir：存放日志数据文件（segment）的目录
-// 		· maxBlockCapacityInWAL：描述wal目录下最大能容纳的block数量
-// · segment：日志数据文件，存储日志内容
-// 		· segmentCapacity segment单文件能够存储的最大字节数，通常情况下由于要保证block不分开存储在多个segment文件中
-//		一个segment文件填不满就会开启下一个segment文件
-// · block：描述segment中的单条日志，用于定界、检查日志完整性
-
-// getMaxBlockCapacityInWAL 获取wal目录下最大能容纳的block数量
-// test环境下是1e8；prod环境下1e10
-func getMaxBlockCapacityInWAL() int64 {
-	return int64(utils.GetValueOnEnv(1e10, 1e8).(float64))
-}
-
-const dirLock = ".lock"
-
-// Options wal日志选项
+// Options 日志配置选项
 type Options struct {
-	// dirPerm 先行日志目录文件权限位
-	// dataPerm 先行日志数据文件权限位
-	dataPerm, dirPerm    os.FileMode
-	segmentCapacity      int64 // segmentCapacity segment 数据文件最大存储容量
-	segmentCacheCapacity int   // segmentCacheCapacity 内存中缓存 segment 的最大数量
-	// noSync 当设置为true时，只有 segment 写满
-	// 才持久化到磁盘。可以提高写性能，但需要承担
-	// 数据丢失的风险。
+	dataPerm             os.FileMode // dataPerm 先行日志数据文件权限位
+	dirPerm              os.FileMode // dirPerm 先行日志目录文件权限位
+	segmentCapacity      int64       // segmentCapacity segment 数据文件最大存储容量
+	segmentCacheCapacity int         // segmentCacheCapacity 内存中缓存 segment 的最大数量
+	// noSync 当设置为true时，只有 segment 写满才持久化到磁盘。
+	// 可以提高写性能，但需要容忍同步周期内数据丢失的风险。
 	noSync       bool
 	syncInterval time.Duration // syncInterval 刷盘周期，单位是毫秒
 }
@@ -49,7 +31,7 @@ type Options struct {
 // NewOptions 初始化wal配置选项
 //
 // 返回值：
-// - 接收器wal配置选项（*options）
+//   - 接收器wal配置选项（*options）
 func NewOptions() *Options {
 	return &Options{
 		dataPerm:             0660,
@@ -61,44 +43,44 @@ func NewOptions() *Options {
 	}
 }
 
-// SetDataPerm 设置segment数据文件权限位
+// SetDataPerm 设置 segment 数据文件权限位
 //
-// 该配置在创建新 segment时会用到，已经存在的segment不会受到影响
+// 该配置在创建新 segment 时会用到，已经存在的 segment 不会受到影响
 //
 // 参数：
-// - dataPerm segment数据文件权限位
+//   - dataPerm segment 数据文件权限位
 //
 // 返回值：
-// - 接收器wal配置选项（*options）
+//   - 接收器wal配置选项（*options）
 func (opts *Options) SetDataPerm(dataPerm os.FileMode) *Options {
 	opts.dataPerm = dataPerm
 	return opts
 }
 
-// SetDirPerm 设置wal日志目录权限位
+// SetDirPerm 设置 Log 日志目录权限位
 //
-// 如果在启动wal时发现指定dirPath下不存在wal目录，该配置会在新建目录时用到
+// 如果在启动 Log 时发现指定dirPath下不存在wal目录，该配置会在新建目录时用到
 //
 // 参数：
-// - dirPerm wal目录权限位
+//   - dirPerm Log 目录权限位
 //
 // 返回值：
-// - 接收器wal配置选项（*options）
+//   - 接收器 Log 配置选项（*options）
 func (opts *Options) SetDirPerm(dirPerm os.FileMode) *Options {
 	opts.dirPerm = dirPerm
 	return opts
 }
 
-// SetSegmentCapacity 设置segment数据文件最大存储容量
+// SetSegmentCapacity 设置 segment 数据文件最大存储容量
 //
-// segment文件在写入时通常不会达到文件最大存储容量就开始写入下一个segment文件
-// 这是因为写入segment的最细粒度是block，单个block无法跨segment存储
+// segment 文件在写入时通常不会达到文件最大存储容量就开始写入下一个 segment 文件
+// 这是因为写入 segment 的最细粒度是 block，单个 block 无法跨 segment 存储
 //
 // 参数：
-// - segmentCapacity segment数据文件最大存储容量
+//   - segmentCapacity segment 数据文件最大存储容量
 //
 // 返回值：
-// - 接收器wal配置选项（*options）
+//   - 接收器 Log 配置选项（*options）
 func (opts *Options) SetSegmentCapacity(segmentCapacity int64) *Options {
 	opts.segmentCapacity = segmentCapacity
 	return opts
@@ -106,13 +88,13 @@ func (opts *Options) SetSegmentCapacity(segmentCapacity int64) *Options {
 
 // SetSegmentCacheSize 设置wal中的segment最大缓存数量
 //
-// segment缓存只有在读取日志内容时生效
+// segment 缓存只有在读取日志内容时生效
 //
 // 参数：
-// - segmentCacheCapacity wal中的segment最大缓存数量
+//   - segmentCacheCapacity LRU 中的 segment 最大缓存数量
 //
 // 返回值：
-// - 接收器wal配置选项（*options）
+//   - 接收器 Log 配置选项（*options）
 func (opts *Options) SetSegmentCacheSize(segmentCacheCapacity int) *Options {
 	opts.segmentCacheCapacity = segmentCacheCapacity
 	return opts
@@ -121,13 +103,14 @@ func (opts *Options) SetSegmentCacheSize(segmentCacheCapacity int) *Options {
 // SetNoSync 设置不要每次写入都持久化到磁盘
 //
 // 当设置为true时，刷盘时机有
-// 1. 外部主动调用wal.Sync
-// 2. 当前segment文件写满时自动持久化数据到磁盘
-// 3. 后台协程每隔syncInterval毫秒周期刷盘
-// 通常情况下设置noSync选项后性能会有可观提升
+//  1. 外部主动调用 wal.Sync
+//  2. 当前 segment 文件写满时自动持久化数据到磁盘
+//  3. 后台协程每隔 syncInterval 毫秒周期刷盘
+//
+// 通常情况下设置 noSync 选项后性能会有可观提升
 //
 // 返回值：
-// - 接收器wal配置选项（*options）
+//   - 接收器 Log 配置选项（*options）
 func (opts *Options) SetNoSync() *Options {
 	opts.noSync = true
 	return opts
@@ -138,15 +121,16 @@ func (opts *Options) SetNoSync() *Options {
 // 只有在设置 SetNoSync 选项后该选项才生效
 //
 // 参数：
-// - syncInterval 后台协程刷盘时间间隔，单位是毫秒
+//   - syncInterval 后台协程刷盘时间间隔，单位是毫秒
 //
 // 返回值：
-// - 接收器wal配置选项（*options）
+//   - 接收器 Log 配置选项（*options）
 func (opts *Options) SetSyncInterval(syncInterval time.Duration) *Options {
 	opts.syncInterval = syncInterval
 	return opts
 }
 
+// check 校验 Options 配置
 func (opts *Options) check() error {
 	// note：暂时不考虑特殊权限位
 	if opts.dataPerm <= 0 || opts.dataPerm > 0777 {
@@ -182,49 +166,53 @@ func (opts *Options) check() error {
 	return nil
 }
 
-// Log 先行日志
+// Log 预写日志
 type Log struct {
 	mu           sync.Mutex
 	opts         *Options   // opts 传入的配置选项
-	dirPath      string     // dirPath 先行日志的目录路径
+	dirPath      string     // dirPath 预写日志的目录路径
 	dirLockFile  *os.File   // dirLockFile 用于锁目录的锁文件
-	segmentCache *utils.Lru // segmentCache 记录缓存，采用LRU缓存策略
+	segmentCache *utils.Lru // segmentCache segment 缓存，采用LRU缓存策略
 	segments     []*segment // segments 所有已知的 segment
 	// isSegmentsOrdered 用于优化 segments 排序性能的脏位
-	// 当 isSegmentsOrdered 设置为true时表示 segments 处于有序状态，重复调用 sortSegments 不会执行排序过程；
-	// 当 isSegmentsOrdered 设置为false时表示 segments 处于无序状态，此时调用 sortSegments 会执行排序过程
+	// 设置为true时表示 segments 处于有序状态，重复调用 sortSegments 不会执行排序过程；
+	// 设置为false时表示 segments 处于无序状态，此时调用 sortSegments 会执行排序过程。
 	isSegmentsOrdered bool
-
-	// activeSegment 当前活跃数据文件
-	// 支持立刻持久化和写满持久化，通过
-	// opts.noSync 控制。
-	activeSegment *segment
-
-	firstBlockIdx int64 // firstBlockIdx 第一个日志块idx，nil表示不存在 firstBlockIdx 指向的block
-	lastBlockIdx  int64 // lastBlockIdx 最后一个日志块idx，nil表示不存在 lastBlockIdx 指向的block
-
-	closed    bool // closed 是否已经关闭
-	corrupted bool // corrupted 是否已损坏
-	bgfailed  bool // bgfailed 后台协程执行失败
-
-	// notifier wal主协程与子协程的同步管道
-	// 只有设置 opts.noSync 为true时会用到
-	notifier chan error
+	activeSegment     *segment   // activeSegment 当前活跃数据文件
+	firstBlockIdx     int64      // firstBlockIdx 第一个日志块索引，nil表示 Log 为空
+	lastBlockIdx      int64      // lastBlockIdx 最后一个日志块索引，nil表示 Log 为空
+	closed            bool       // closed 是否已经关闭
+	corrupted         bool       // corrupted 是否已损坏
+	bgfailed          bool       // bgfailed 后台协程执行失败
+	notifier          chan error // notifier wal主协程与子协程的同步管道，只有设置 opts.noSync 为true时会用到
 }
 
 // Open 打开wal
 //
-// 为了避免内存泄漏，结束使用wal后需要显示调用 wal.Close 关闭
-// 如果 Open 指定的dir已经被其他wal实例打开，会返回 consts.NewFlockFileErr
-// 外部应该检查这个错误并且重试其他目录路径
+// 为了避免内存泄漏，结束使用后需要显示调用 Log.Close 关闭
 //
 // 参数：
-// - dirPath 存放wal日志的目录
-// - opts wal配置选项，不传配置将设置成默认值，见 NewOptions
+//   - dirPath 存放 Log 日志的目录
+//   - opts 配置选项，不传配置将设置成默认值，见 NewOptions
 //
 // 返回值：
-// - wal日志（*Log）
-// - errs 过程中出现的错误，类型是 *consts.KvErr
+//   - wal日志（*Log）
+//   - errs 过程中出现的错误，类型是 *errs.KvErr
+//
+// 异常：
+//   - errs.NewFlockFileErr Open 指定的dir已经被其他 Log 实例打开，
+//     此时外部应该检查这个错误并且重试其他目录路径；有小概率是因为初始化 Log
+//     实例过程中出现其他错误（会在日志中输出）之后释放目录锁导致
+//   - errs.NewInvalidParamErr 传入 opts 校验未通过，日志中有描述具体非法参数；
+//     也有可能是传入的目录路径不是一个目录
+//   - errs.NewMkdirErr 配置中目录不存在，且尝试创建目录失败
+//   - errs.NewFileStatErr 获取目录文件信息失败
+//   - errs.NewOpenFileErr 打开目录锁文件、数据失败
+//   - errs.NewWalkDirErr 遍历日志目录失败，具体原因请参考日志
+//   - errs.NewParseIntErr 解析 segment 文件名失败
+//   - errs.NewReadFileErr 读取 segment 文件失败
+//   - errs.NewCorruptErr  segment 数据被篡改、损坏
+//   - errs.NewBackgroundErr 这个错误不会抛出，但会出现在日志中，表示后台协程执行出错
 func Open(dirPath string, opts *Options) (_ *Log, err error) {
 	if opts == nil {
 		opts = NewOptions()
@@ -272,7 +260,7 @@ func Open(dirPath string, opts *Options) (_ *Log, err error) {
 	return wal, nil
 }
 
-// init 检查或创建日志目录，读日志数据文件，初始化wal
+// init 检查或创建日志目录，读日志数据文件，初始化 Log
 func (wal *Log) init() error {
 	err := wal.checkOrInitDir()
 	if err != nil {
@@ -289,10 +277,8 @@ func (wal *Log) init() error {
 		return err
 	}
 
-	err = wal.locateBlockRange()
-	if err != nil {
-		return err
-	}
+	wal.locateBlockRange()
+
 	// 最终一致性场景下使用后台协程定时刷盘
 	// 刷盘周期默认1s
 	if wal.opts.noSync {
@@ -334,7 +320,7 @@ func (wal *Log) checkOrInitDir() error {
 	return nil
 }
 
-// lockDir 锁住目录，避免多个wal实例重入同一个wal目录
+// lockDir 锁住目录，避免多个 Log 实例重入同一个目录
 func (wal *Log) lockDir() error {
 	file, err := utils.CheckAndCreateFile(filepath.Join(wal.dirPath, dirLock), os.O_CREATE|os.O_RDWR, 0770)
 	if err != nil {
@@ -383,7 +369,7 @@ func (wal *Log) loadSegments() error {
 			return err
 		}
 		wal.segments = append(wal.segments, currentSegment)
-		firstBlockIdOfSegment, hasSuffix, err := baseToBlockId(de.Name())
+		firstBlockIdOfSegment, hasSuffix, err := baseToBlockIdx(de.Name())
 		if err != nil {
 			return err
 		}
@@ -417,7 +403,7 @@ func (wal *Log) loadSegments() error {
 
 	// 首次启动目录下没有segment
 	if activeSegment == nil {
-		activeSegment, err = newSegment(filepath.Join(wal.dirPath, blockIdToBase(0, true)), wal.opts.segmentCapacity)
+		activeSegment, err = newSegment(filepath.Join(wal.dirPath, blockIdxToBase(0, true)), wal.opts.segmentCapacity)
 		if err != nil {
 			return err
 		}
@@ -437,7 +423,7 @@ func (wal *Log) loadSegments() error {
 }
 
 // locateBlockRange 从 segments 中定位 firstBlockId 和 lastBlockId
-func (wal *Log) locateBlockRange() error {
+func (wal *Log) locateBlockRange() {
 	wal.sortSegments()
 	for idx, seg := range wal.segments {
 		if seg == wal.activeSegment {
@@ -449,13 +435,12 @@ func (wal *Log) locateBlockRange() error {
 		}
 	}
 
-	// wal.firstBlockIdx 意味着wal中只有一个 segment，且 segment 中没有block
-	// 如果 activeSegment 不是 firstSegment，且 activeSegment 中没有block
-	// wal.lastBlockIdx 应该取到上一个segment的最后一个blockIdx
+	// wal.firstBlockIdx 意味着 Log 中只有一个 segment，且 segment 中没有 block
+	// 如果 activeSegment 不是 firstSegment，且 activeSegment 中没有 block
+	// wal.lastBlockIdx 应该取到上一个 segment 的最后一个 blockIdx
 	if wal.firstBlockIdx != -1 {
 		wal.lastBlockIdx = wal.activeSegment.getStartBlockIdx() + wal.activeSegment.size() - 1
 	}
-	return nil
 }
 
 // periodicSync 后台协程周期刷盘内存中的日志数据
@@ -469,7 +454,6 @@ func (wal *Log) periodicSync() {
 		case <-wal.notifier:
 			return
 		case <-ticker.C:
-			// todo: 去掉close之后再看下是否有问题
 			// note: ticker和notifier同时可消费时notifier更高优
 			wal.mu.Lock()
 			if wal.closed {
@@ -491,12 +475,14 @@ func (wal *Log) periodicSync() {
 	}
 }
 
-// Close 关闭wal，释放资源
-//
-// 如果在wal已经关闭后调用会返回 consts.NewFileClosedErr
+// Close 关闭 Log，释放资源
 //
 // 返回值：
-// - errs 过程中出现的错误，类型是 *consts.KvErr
+//   - errs 过程中出现的错误，类型是 *errs.KvErr
+//
+// 异常：
+//   - errs.NewFileClosedErr 在 Log 或 segment 已经关闭后再次尝试关闭
+//   - errs.NewFlockFileErr 释放目录锁失败
 func (wal *Log) Close() error {
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
@@ -506,7 +492,7 @@ func (wal *Log) Close() error {
 		return err
 	}
 
-	// 清空segmentCache，关闭其中缓存的segment文件
+	// 清空 segmentCache，关闭其中缓存的 segment 文件
 	var isActiveSegmentClosed bool
 	err = wal.segmentCache.Traverse(func(item interface{}) error {
 		segment := item.(*segment)
@@ -525,7 +511,7 @@ func (wal *Log) Close() error {
 		return err
 	}
 
-	// 关闭activeSegment文件
+	// 关闭 activeSegment 文件
 	if !isActiveSegmentClosed {
 		err = wal.activeSegment.close()
 		if err != nil {
@@ -554,22 +540,30 @@ func (wal *Log) Close() error {
 	return nil
 }
 
-// Write 写入wal日志数据
-//
-// 当返回 consts.NewWalFullErr 错误时意味着wal日志文件夹下存储内容已满
-// 使用者应该主动检查该类型错误并在 wal.Truncate 后重新尝试写入
-// 此时wal不会关闭，因此对wal的操作是安全的
-//
-// 如果在wal已经关闭的情况下尝试写入，会返回 consts.NewFileClosedErr 错误
-// 如果在wal数据已经被破坏的情况下尝试写入，会返回 consts.NewCorruptErr 错误
-// 如果在wal后台协程执行失败的情况下尝试写入，会返回 consts.NewBackgroundErr 错误
+// Write 写入日志数据
 //
 // 参数：
-// - data 日志数据，类型是字节数组
+//   - data 日志数据，类型是字节数组
 //
 // 返回值：
-// - blockIdx 写入成功后会返回写入日志在wal中的blockIdx，该值用于 Read、 Read 和 Truncate
-// - errs 过程中出现的错误，类型是 *consts.KvErr
+//   - blockIdx block 索引，该值用于 Read 和 Truncate
+//   - errs 过程中出现的错误，类型是 *errs.KvErr
+//
+// 异常：
+//   - errs.NewWalFullErr Log 日志文件夹下存储内容已满，使用者应该主动检查该类型错误
+//     并在 wal.Truncate 后重新尝试写入，此时 Log 不会关闭，因此对 Log 的操作是安全的
+//   - errs.NewFileClosedErr 在wal已经关闭的情况下写入
+//   - errs.NewCorruptErr 在wal数据已经被破坏的情况下写入
+//   - errs.NewBackgroundErr 在wal后台协程执行失败的情况下写入
+//   - errs.NewInvalidParamErr 单次写入数据超过 segment 文件容量或写入空数据
+//   - errs.NewRenameFileErr 重命名 segment 文件失败
+//   - errs.NewParseIntErr 解析 segment 文件名失败
+//   - errs.NewCreateTempFileErr 创建临时文件失败
+//   - errs.NewSeekFileErr 重定位 segment 文件偏移量失败
+//   - errs.NewCopyFileErr 拷贝 segment 文件内容失败
+//   - errs.NewCloseFileErr 关闭 segment 文件失败
+//   - errs.NewWriteFileErr 写入 segment 文件失败
+//   - errs.NewSyncFileErr 同步 segment 文件到磁盘失败
 func (wal *Log) Write(data []byte) (int64, error) {
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
@@ -585,7 +579,7 @@ func (wal *Log) Write(data []byte) (int64, error) {
 	}
 
 	// 循环写日志时可能日志文件夹下内容写满
-	// 需要考虑lastBlockIdx追上firstBlockIdx的情况
+	// 需要考虑 lastBlockIdx 追上 firstBlockIdx 的情况
 	nextBlockIdx := (wal.lastBlockIdx + 1) % getMaxBlockCapacityInWAL()
 	if nextBlockIdx == wal.firstBlockIdx {
 		e := errs.NewWalFullErr()
@@ -596,15 +590,15 @@ func (wal *Log) Write(data []byte) (int64, error) {
 
 	err = wal.activeSegment.write(data)
 	if err != nil {
-		// 1. 如果当前segment满了，那么新开一个segment
-		// 2. 如果写segment时发现segment内部blockIdx已经触达blockCapacity上限，那么blockIdx从零开始计数新开一个segment
+		// 1. 如果当前 segment 满了，那么新开一个 segment
+		// 2. 如果写 segment 时发现 segment 内部 blockIdx 已经触达 blockCapacity 上限，那么 blockIdx 从零开始计数新开一个 segment
 		if errs.GetCode(err) == errs.SegmentFullErrCode || errs.GetCode(err) == errs.ReachBlockIdxLimitErrCode {
 			err := wal.activeSegment.close()
 			if err != nil {
 				return 0, err
 			}
 
-			nextActiveSegment, err := newSegment(filepath.Join(wal.dirPath, blockIdToBase(wal.lastBlockIdx, true)), wal.opts.segmentCapacity)
+			nextActiveSegment, err := newSegment(filepath.Join(wal.dirPath, blockIdxToBase(wal.lastBlockIdx, true)), wal.opts.segmentCapacity)
 			if err != nil {
 				return 0, err
 			}
@@ -615,19 +609,19 @@ func (wal *Log) Write(data []byte) (int64, error) {
 				return 0, err
 			}
 
-			// 在下个segment文件创建成功后再去掉activeSegment文件名
-			// 避免出现wal目录下出现没有segment文件有.active后缀的情况
-			// 如果rename失败，wal目录下会出现多个segment文件有.active
-			// 后缀的情况，wal.init()会选择有.active后缀且startBlockId
-			// 最大的segment文件作为activeSegment
+			// 在下个 segment 文件创建成功后再去掉 activeSegment 文件名
+			// 避免出现目录下出现没有 segment 文件有.active后缀的情况
+			// 如果 rename 失败，目录下会出现多个 segment 文件有.active
+			// 后缀的情况，wal.init()会选择有.active后缀且 startBlockId
+			// 最大的 segment 文件作为 activeSegment
 			err = wal.activeSegment.rename()
 			if err != nil {
 				return 0, err
 			}
 			wal.activeSegment = nextActiveSegment
 
-			// 如果segmentSize设置小于一次单wal日志数据最大体积
-			// 那么可能出现新建一个segment也写入失败的问题
+			// 如果 segmentSize 设置小于一次单日志数据最大体积
+			// 那么可能出现新建一个 segment 也写入失败的问题
 			err = wal.activeSegment.write(data)
 			if err != nil {
 				logs.Error(err.Error())
@@ -648,18 +642,27 @@ func (wal *Log) Write(data []byte) (int64, error) {
 	return wal.lastBlockIdx, nil
 }
 
-// Read 批量读日志
+// Read 读指定范围内的日志
 //
-// 如果在wal已经关闭的情况下尝试读取，会返回 consts.NewFileClosedErr 错误
-// 如果在wal数据已经被破坏的情况下尝试读取，会返回 consts.NewCorruptErr 错误
-// 如果在wal后台协程执行失败的情况下尝试读取，会返回 consts.NewBackgroundErr 错误
+// 当出现日志循环时，firstBlockIdx 比合法的 idx 大
+// 此时的读取范围是 [0, idx) & [firstBlockIdx, maxBlockCapacityInWAL]
+// 截断后 firstBlockIdx 会发生改变
 //
 // 参数：
-// - idx 指定读取 [firstBlockIdx, idx] 范围内的日志记录
+//   - idx 指定读取 firstBlockIdx ~ idx 范围内的日志记录
 //
 // 返回值：
-// - blockIdxToData 查询到的日志数据映射，blockIdx -> data
-// - errs 过程中出现的错误，类型是 *consts.KvErr
+//   - blockIdxToData 查询到的日志数据映射，blockIdx -> data
+//   - errs 过程中出现的错误，类型是 *errs.KvErr
+//
+// 异常：
+//   - errs.NewFileClosedErr 在wal已经关闭的情况下读取
+//   - errs.NewCorruptErr 在wal数据已经被破坏的情况下读取
+//   - errs.NewBackgroundErr 在wal后台协程执行失败的情况下读取
+//   - errs.NewNotFoundErr 传入idx不在有效范围内
+//   - errs.NewOpenFileErr 打开目录锁文件、数据失败
+//   - errs.NewReadFileErr 读取 segment 文件失败
+//   - errs.NewCorruptErr 在wal数据已经被破坏的情况下写入
 func (wal *Log) Read(idx int64) (map[int64][]byte, error) {
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
@@ -713,12 +716,19 @@ func (wal *Log) Read(idx int64) (map[int64][]byte, error) {
 
 // Sync 同步内存中的日志数据到磁盘中
 //
-// 如果在wal已经关闭的情况下尝试同步，会返回 consts.NewFileClosedErr 错误
-// 如果在wal数据已经被破坏的情况下尝试同步，会返回 consts.NewCorruptErr 错误
-// 如果在wal后台协程执行失败的情况下尝试同步，会返回 consts.NewBackgroundErr 错误
-//
 // 返回值：
-// - errs 过程中出现的错误，类型是 *consts.KvErr
+//   - errs 过程中出现的错误，类型是 *errs.KvErr
+//
+// 异常：
+//   - errs.NewFileClosedErr 在 Log、segment 已经关闭的情况下同步
+//   - errs.NewCorruptErr 在wal数据已经被破坏的情况下同步
+//   - errs.NewBackgroundErr 在wal后台协程执行失败的情况下同步
+//   - errs.NewCreateTempFileErr 创建临时文件失败
+//   - errs.NewSeekFileErr 重定位 segment 文件偏移量失败
+//   - errs.NewCopyFileErr 拷贝 segment 文件内容失败
+//   - errs.NewCloseFileErr 关闭 segment 文件失败
+//   - errs.NewWriteFileErr 写入 segment 文件失败
+//   - errs.NewSyncFileErr 同步 segment 文件到磁盘失败
 func (wal *Log) Sync() error {
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
@@ -731,11 +741,16 @@ func (wal *Log) Sync() error {
 	return wal.activeSegment.sync()
 }
 
-// Len 获取wal日志中存储的日志数量（block数量）
+// Len 获取 Log 日志中存储的日志数量，即 block 数量
 //
 // 返回值：
-// - number 日志数量
-// - errs 过程中出现的错误，类型是 *consts.KvErr
+//   - number 日志数量
+//   - errs 过程中出现的错误，类型是 *errs.KvErr
+//
+// 异常：
+//   - errs.NewFileClosedErr 在wal已经关闭的情况下调用
+//   - errs.NewCorruptErr 在wal数据已经被破坏的情况下调用
+//   - errs.NewBackgroundErr 在wal后台协程执行失败的情况下调用
 func (wal *Log) Len() (int64, error) {
 	err := wal.checkState(true, true, true)
 	if err != nil {
@@ -750,34 +765,47 @@ func (wal *Log) Len() (int64, error) {
 // Truncate 截断指定范围内的日志
 //
 // 当出现日志循环时，firstBlockIdx 比指定的 idx 大
-// 此时的截断范围是 [0, idx) & [firstBlockIdx, mask]
+// 此时的截断范围是 [0, idx) & [firstBlockIdx, maxBlockCapacityInWAL]
 // 截断后 firstBlockIdx 会发生改变
 //
 // 参数：
-// - idx 指定截断 [firstBlockIdx, idx] 范围内的日志记录
+//   - idx 指定截断 firstBlockIdx ～ idx 范围内的日志记录
 //
 // 返回值：
-// - errs 过程中出现的错误，类型是 *consts.KvErr
+//   - errs 过程中出现的错误，类型是 *errs.KvErr
 //
-// example1：
+// 异常：
+//   - errs.NewFileClosedErr 在wal已经关闭的情况下写入
+//   - errs.NewCorruptErr 在wal数据已经被破坏的情况下写入
+//   - errs.NewBackgroundErr 在wal后台协程执行失败的情况下写入
+//   - errs.NewInvalidParamErr 单次写入数据超过 segment 文件容量或写入空数据
+//   - errs.NewRenameFileErr 重命名 segment 文件失败
+//   - errs.NewCreateTempFileErr 创建临时文件失败
+//   - errs.NewSeekFileErr 重定位 segment 文件偏移量失败
+//   - errs.NewCopyFileErr 拷贝 segment 文件内容失败
+//   - errs.NewCloseFileErr 关闭 segment 文件失败
+//   - errs.NewWriteFileErr 写入 segment 文件失败
+//   - errs.NewSyncFileErr 同步 segment 文件到磁盘失败
+//   - errs.NewOpenFileErr 打开 segment 文件失败
+//   - errs.NewRemoveFileErr 移除 segment 文件失败
 //
+// 示例：
+//
+//	// 循环执行完成后，Log 中 firstBlockIdx 为0，blockId 的范围是 [0, 100]
 //	for i := 0; i < 100; i++ {
-//			_, errs := wal.Write([]byte{1, 2, 3})
-//	} // 循环执行完成后，wal中 firstBlockIdx 为0，blockId的范围是[0, 100]
+//		_, errs := wal.Write([]byte{1, 2, 3})
+//	}
 //
-//	/* 截断 [0, 50) 范围内的block，此时wal中维护的block范围是[50, 100]
-//	firstBlockIdx 是50 */
+//	// 截断 [0, 50) 范围内的 block，此时 Log 中维护的 block 范围是 [50, 100]，firstBlockIdx 是50
 //	wal.truncate(50)
 //
-// example2:
-//
 //	// 继续上面的例子，假设wal能够容纳的最大block数量是100，那么我们继续向wal中写的日志blockId会从0开始循环
+//	// 循环执行完成后，wal中 firstBlockIdx 为50，blockId的范围是[0, 20] & [50, 100]
 //	for i := 0; i < 20; i++ {
-//			_, errs := wal.Write([]byte{1, 2, 3})
-//	} // 循环执行完成后，wal中 firstBlockIdx 为50，blockId的范围是[0, 20] & [50, 100]
+//		_, errs := wal.Write([]byte{1, 2, 3})
+//	}
 //
-//	/* 截断 [0, 10) & [50, 100]范围内的block，此时wal中维护的block范围是[10, 20]
-//	firstBlockIdx 是10 */
+//	// 截断 [0, 10) & [50, 100] 范围内的 block，此时 Log 中维护的 block 范围是 [10, 20]，firstBlockIdx 是10
 //	wal.truncate(10)
 func (wal *Log) Truncate(idx int64) error {
 	wal.mu.Lock()
@@ -856,6 +884,8 @@ func (wal *Log) Truncate(idx int64) error {
 	return nil
 }
 
+// traverseSegments 遍历数据文件
+// 并将包含 firstBlockIdx ~ idx 范围内 block 的 segment 传入 fn 执行外部动作
 func (wal *Log) traverseSegments(idx int64, fn func(seg *segment) error) error {
 	targetSegmentFirstBlockIdx := wal.findSegment(idx).getStartBlockIdx()
 	for _, seg := range wal.segments {
@@ -873,7 +903,7 @@ func (wal *Log) traverseSegments(idx int64, fn func(seg *segment) error) error {
 	return nil
 }
 
-// findSegment 根据blockIdx查找存储该block的 segment
+// findSegment 根据 block 索引查找存储该 block 的 segment
 func (wal *Log) findSegment(idx int64) *segment {
 	// note: 二分搜索要求序列有序
 	wal.sortSegments()
@@ -899,7 +929,7 @@ func (wal *Log) sortSegments() {
 	wal.isSegmentsOrdered = true
 }
 
-// checkState 检查wal中的状态位
+// checkState 检查 Log 中的状态位
 // 根据传入的参数动态决定那些状态检查那些状态不检查
 func (wal *Log) checkState(closed, corrupted, bgfailed bool) error {
 	if closed && wal.closed {
@@ -918,12 +948,12 @@ func (wal *Log) checkState(closed, corrupted, bgfailed bool) error {
 	return nil
 }
 
-// checkRange 检查传入的blockIdx是否是有效
-// 认为wal中仍在维护的blockIdx是有效的
+// checkRange 检查传入的 block 索引是否是有效
+// 认为 Log 中仍在维护的 block 索引是有效的
 func (wal *Log) checkRange(idxs ...int64) error {
 	for _, idx := range idxs {
 		// 正常情况，lastBlockIdx 比 firstBlockIdx 大
-		// 认为idx比 firstBlockIdx 小或者idx比 lastBlockIdx 时参数非法
+		// 认为idx比 firstBlockIdx 小或者 idx 比 lastBlockIdx 时参数非法
 		if wal.firstBlockIdx <= wal.lastBlockIdx && (idx < wal.firstBlockIdx || idx > wal.lastBlockIdx) {
 			e := errs.NewInvalidParamErr()
 			logs.Error(e.Error(), zap.String(consts.LogFieldParams, "idxs"), zap.Int64s(consts.LogFieldValue, idxs))
@@ -943,7 +973,6 @@ func (wal *Log) checkRange(idxs ...int64) error {
 }
 
 // checkDataSize 检查写入的日志数据大小是否合法
-// 当单次写入的日志数据大小为0或者超过单个 segment 的最大容量时会返回 consts.NewInvalidParamErr 错误
 func (wal *Log) checkDataSize(data []byte) error {
 	lengthOfData := int64(len(data))
 	if lengthOfData == 0 || lengthOfData > wal.opts.segmentCapacity {
