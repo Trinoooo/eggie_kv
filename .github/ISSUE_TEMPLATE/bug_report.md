@@ -1,11 +1,8 @@
 ---
-name: bug_report
-about: You're experiencing an issue with Eggie KV that is different than the documented
-  behavior.
+name: [BUG]报告问题
+about: 当你使用EggieKV时，你遇到了和文档描述行为不一致的问题。
 title: "[BUG](Module): Description"
 labels: bug
-assignees: ''
-
 ---
 
 # 问题描述
