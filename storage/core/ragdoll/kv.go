@@ -22,7 +22,12 @@ func New(config *viper.Viper) (iface.ICore, error) {
 		return nil, err
 	}
 
-	wal, err := wal.Open("123", wal.NewOptions())
+	wal, err := wal.NewLog("123", wal.NewOptions())
+	if err != nil {
+		return nil, err
+	}
+
+	err = wal.Open()
 	if err != nil {
 		return nil, err
 	}
