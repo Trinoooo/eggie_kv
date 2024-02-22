@@ -1,6 +1,6 @@
 # 🌚 Eggie KV
 <div align="center">
-一个简单的、支持持久化的、基于内存的key-value存储
+一个简单的、支持持久化的、基于内存的高性能key-value存储
 
 ![Eggie KV logo](asset/logo.jpeg)
 
