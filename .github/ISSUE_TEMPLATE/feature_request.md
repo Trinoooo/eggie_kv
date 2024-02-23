@@ -1,10 +1,8 @@
 ---
-name: Feature request
-about: If you have something you think Eggie KV could improve or add support for
+name: [FEAT]功能请求
+about: 如果你认为EggieKv有哪些可改进的地方或者可以支持的地方
 title: "[FEAT]: Description"
 labels: enhancement
-assignees: ''
-
 ---
 
 # 功能请求描述

@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+var (
+	dirPath = "../../../../test_data/wal/"
+)
+
 func TestMain(m *testing.M) {
 	// 每次测试之前删除测试数据
 	err := os.RemoveAll("../../../../test_data/")
@@ -279,13 +283,17 @@ func TestOptions_CheckFailed(t *testing.T) {
 // TestLog_WriteNormal 写入等长记录
 func TestLog_WriteNormal(t *testing.T) {
 	segmentSize := 100 * consts.MB
-	opts := NewOptions().
+	wal, err := NewLog(dirPath, NewOptions().
 		SetDirPerm(0770).
 		SetDataPerm(0660).
 		SetSegmentCacheSize(5).
 		SetSegmentCapacity(int64(segmentSize)).
-		SetNoSync()
-	wal, err := Open("../../../../test_data/wal/", opts)
+		SetNoSync())
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = wal.Open()
 	if err != nil {
 		t.Error(err)
 	}
@@ -306,16 +314,21 @@ func TestLog_WriteNormal(t *testing.T) {
 // TestLog_WriteAbnormal 写如变长记录
 func TestLog_WriteAbnormal(t *testing.T) {
 	segmentSize := 100 * consts.MB
-	opts := NewOptions().
+	wal, err := NewLog(dirPath, NewOptions().
 		SetDirPerm(0770).
 		SetDataPerm(0660).
 		SetSegmentCacheSize(5).
 		SetSegmentCapacity(int64(segmentSize)).
-		SetNoSync()
-	wal, err := Open("../../../../test_data/wal/", opts)
+		SetNoSync())
 	if err != nil {
 		t.Error(err)
 	}
+
+	err = wal.Open()
+	if err != nil {
+		t.Error(err)
+	}
+
 	seed := 2001 // 保证结果可复现
 	r := rand.New(rand.NewSource(int64(seed)))
 	for i := 0; i < 1e7; i++ {
@@ -334,13 +347,17 @@ func TestLog_WriteAbnormal(t *testing.T) {
 // TestLog_WriteFailed 写入数据不合法，写入失败
 func TestLog_WriteFailed(t *testing.T) {
 	segmentSize := 100 * consts.MB
-	opts := NewOptions().
+	wal, err := NewLog(dirPath, NewOptions().
 		SetDirPerm(0770).
 		SetDataPerm(0660).
 		SetSegmentCacheSize(5).
 		SetSegmentCapacity(int64(segmentSize)).
-		SetNoSync()
-	wal, err := Open("../../../../test_data/wal/", opts)
+		SetNoSync())
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = wal.Open()
 	if err != nil {
 		t.Error(err)
 	}
@@ -356,28 +373,33 @@ func TestLog_WriteFailed(t *testing.T) {
 	}
 }
 
+var readIdxList = []int64{
+	0,        // 第一个segment第一个
+	0,        // 重复读
+	700000,   // 第一个segment中间
+	794374,   // 第一个segment的最后一个
+	794375,   // 第二个segment的第一个
+	23831250, // 定长记录中的随便一个segment的第一个
+	24000000, // 定长记录中的随便一个segment的中间
+	24625624, // 定长记录中的随便一个segment的最后一个
+	30507158, // 变长记录中的随便一个segment的第一个
+	30900000, // 变长记录中的随便一个segment的中间
+	30918392, // 变长记录中的随便一个segment的最后一个
+	39949649, // activeSegment中的第一个
+	39950000, // activeSegment的中间
+	39999999, // activeSegment中的最后一个
+}
+
 // TestLog_Read 测试读日志
 func TestLog_Read(t *testing.T) {
-	wal, err := Open("../../../../test_data/wal/", nil)
+	wal, err := NewLog(dirPath, nil)
 	if err != nil {
 		t.Error(err)
 	}
 
-	readIdxList := []int64{
-		0,        // 第一个segment第一个
-		0,        // 重复读
-		700000,   // 第一个segment中间
-		794374,   // 第一个segment的最后一个
-		794375,   // 第二个segment的第一个
-		23831250, // 定长记录中的随便一个segment的第一个
-		24000000, // 定长记录中的随便一个segment的中间
-		24625624, // 定长记录中的随便一个segment的最后一个
-		30507158, // 变长记录中的随便一个segment的第一个
-		30900000, // 变长记录中的随便一个segment的中间
-		30918392, // 变长记录中的随便一个segment的最后一个
-		39949649, // activeSegment中的第一个
-		39950000, // activeSegment的中间
-		39999999, // activeSegment中的最后一个
+	err = wal.Open()
+	if err != nil {
+		t.Error(err)
 	}
 
 	for _, idx := range readIdxList {
@@ -397,7 +419,12 @@ func TestLog_Read(t *testing.T) {
 
 // TestLog_ReadFailed 尝试读取一个有效范围外的日志
 func TestLog_ReadFailed(t *testing.T) {
-	wal, err := Open("../../../../test_data/wal/", nil)
+	wal, err := NewLog(dirPath, nil)
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = wal.Open()
 	if err != nil {
 		t.Error(err)
 	}
@@ -413,28 +440,34 @@ func TestLog_ReadFailed(t *testing.T) {
 	}
 }
 
+var truncateIdxList = []int64{
+	0,        // 第一个segment第一个
+	700000,   // 第一个segment中间
+	794374,   // 第一个segment的最后一个
+	794375,   // 第二个segment的第一个
+	23831250, // 定长记录中的随便一个segment的第一个
+	24000000, // 定长记录中的随便一个segment的中间
+	24625624, // 定长记录中的随便一个segment的最后一个
+	30507158, // 变长记录中的随便一个segment的第一个
+	30900000, // 变长记录中的随便一个segment的中间
+	30918392, // 变长记录中的随便一个segment的最后一个
+	39949649, // activeSegment中的第一个
+	39950000, // activeSegment的中间
+	39999999, // activeSegment中的最后一个
+}
+
 // TestLog_Truncate 截断日志
 func TestLog_Truncate(t *testing.T) {
-	wal, err := Open("../../../../test_data/wal/", nil)
+	wal, err := NewLog(dirPath, nil)
 	if err != nil {
 		t.Error(err)
 	}
 
-	truncateIdxList := []int64{
-		0,        // 第一个segment第一个
-		700000,   // 第一个segment中间
-		794374,   // 第一个segment的最后一个
-		794375,   // 第二个segment的第一个
-		23831250, // 定长记录中的随便一个segment的第一个
-		24000000, // 定长记录中的随便一个segment的中间
-		24625624, // 定长记录中的随便一个segment的最后一个
-		30507158, // 变长记录中的随便一个segment的第一个
-		30900000, // 变长记录中的随便一个segment的中间
-		30918392, // 变长记录中的随便一个segment的最后一个
-		39949649, // activeSegment中的第一个
-		39950000, // activeSegment的中间
-		39999999, // activeSegment中的最后一个
+	err = wal.Open()
+	if err != nil {
+		t.Error(err)
 	}
+
 	for _, idx := range truncateIdxList {
 		err = wal.Truncate(idx)
 		if err != nil {
@@ -456,7 +489,12 @@ func TestLog_Truncate(t *testing.T) {
 
 // TestLog_OpenOnlyEmptySegment wal目录下只有一个空segment
 func TestLog_OpenOnlyEmptySegment(t *testing.T) {
-	wal, err := Open("../../../../test_data/wal/", nil)
+	wal, err := NewLog(dirPath, nil)
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = wal.Open()
 	if err != nil {
 		t.Error(err)
 	}
@@ -480,7 +518,12 @@ func TestLog_OpenWithDir(t *testing.T) {
 		t.Error(err)
 	}
 
-	wal, err := Open("../../../../test_data/wal/", nil)
+	wal, err := NewLog(dirPath, nil)
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = wal.Open()
 	if err != nil {
 		t.Error(err)
 	}
@@ -498,7 +541,12 @@ func TestLog_OpenWithDuplicateActiveSegment(t *testing.T) {
 		t.Log(err)
 	}
 
-	wal, err := Open("../../../../test_data/wal/", nil)
+	wal, err := NewLog(dirPath, nil)
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = wal.Open()
 	if err != nil {
 		t.Error(err)
 	}
@@ -532,7 +580,12 @@ func TestLog_Corrupt(t *testing.T) {
 		t.Error(err)
 	}
 
-	_, err = Open("../../../../test_data/wal/", nil)
+	wal, err := NewLog(dirPath, nil)
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = wal.Open()
 	if err != nil {
 		t.Log(err)
 	}
@@ -547,7 +600,12 @@ func TestLog_Corrupt(t *testing.T) {
 		t.Error(err)
 	}
 
-	_, err = Open("../../../../test_data/wal/", nil)
+	wal, err = NewLog(dirPath, nil)
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = wal.Open()
 	if err != nil {
 		t.Log(err)
 	}
@@ -562,7 +620,12 @@ func TestLog_Corrupt(t *testing.T) {
 		t.Error(err)
 	}
 
-	_, err = Open("../../../../test_data/wal/", nil)
+	wal, err = NewLog(dirPath, nil)
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = wal.Open()
 	if err != nil {
 		t.Log(err)
 	}
@@ -581,11 +644,15 @@ func TestLog_Sync(t *testing.T) {
 	}
 
 	segmentSize := 100 * consts.MB
-	opts := NewOptions().
-		SetSegmentCapacity(int64(segmentSize))
-	wal, err := Open("../../../../test_data/wal/", opts)
+	wal, err := NewLog(dirPath, NewOptions().
+		SetSegmentCapacity(int64(segmentSize)))
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	err = wal.Open()
+	if err != nil {
+		t.Error(err)
 	}
 
 	for i := 0; i < 100; i++ {
@@ -609,13 +676,17 @@ func TestLog_Sync(t *testing.T) {
 // TestLog_WriteNormalToFull 写入等长记录到写满
 func TestLog_WriteNormalToFull(t *testing.T) {
 	segmentSize := 100 * consts.MB
-	opts := NewOptions().
+	wal, err := NewLog(dirPath, NewOptions().
 		SetDirPerm(0770).
 		SetDataPerm(0660).
 		SetSegmentCacheSize(5).
 		SetSegmentCapacity(int64(segmentSize)).
-		SetNoSync()
-	wal, err := Open("../../../../test_data/wal/", opts)
+		SetNoSync())
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = wal.Open()
 	if err != nil {
 		t.Error(err)
 	}
@@ -648,13 +719,17 @@ func TestLog_ReadCycleInvalid(t *testing.T) {
 	}
 
 	segmentSize := 100 * consts.MB
-	opts := NewOptions().
+	wal, err := NewLog(dirPath, NewOptions().
 		SetDirPerm(0770).
 		SetDataPerm(0660).
 		SetSegmentCacheSize(5).
 		SetSegmentCapacity(int64(segmentSize)).
-		SetNoSync()
-	wal, err := Open("../../../../test_data/wal/", opts)
+		SetNoSync())
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = wal.Open()
 	if err != nil {
 		t.Error(err)
 	}
@@ -692,15 +767,20 @@ func BenchmarkWal_Write_1000byte(b *testing.B) {
 
 func benchmarkInner(b *testing.B, data []byte) {
 	segmentSize := 100 * consts.MB
-	opts := NewOptions().
+	wal, err := NewLog(dirPath, NewOptions().
 		SetDirPerm(0770).
 		SetDataPerm(0660).
 		SetSegmentCacheSize(5).
-		SetSegmentCapacity(int64(segmentSize))
-	wal, err := Open("../../../../test_data/wal/", opts)
+		SetSegmentCapacity(int64(segmentSize)))
 	if err != nil {
 		b.Fatal(err)
 	}
+
+	err = wal.Open()
+	if err != nil {
+		b.Error(err)
+	}
+
 	defer wal.Close()
 
 	b.ResetTimer()

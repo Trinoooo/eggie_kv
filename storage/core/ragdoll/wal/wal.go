@@ -187,9 +187,7 @@ type Log struct {
 	notifier          chan error // notifier wal主协程与子协程的同步管道，只有设置 opts.noSync 为true时会用到
 }
 
-// Open 打开wal
-//
-// 为了避免内存泄漏，结束使用后需要显示调用 Log.Close 关闭
+// NewLog 初始化 Log
 //
 // 参数：
 //   - dirPath 存放 Log 日志的目录
@@ -200,11 +198,39 @@ type Log struct {
 //   - errs 过程中出现的错误，类型是 *errs.KvErr
 //
 // 异常：
+//   - errs.NewInvalidParamErr 传入 opts 校验未通过，日志中有描述具体非法参数；
+//     也有可能是传入的目录路径不是一个目录
+func NewLog(dirPath string, opts *Options) (*Log, error) {
+	if opts == nil {
+		opts = NewOptions()
+	}
+
+	err := opts.check()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Log{
+		dirPath:       dirPath,
+		opts:          opts,
+		segmentCache:  utils.NewLRU(opts.segmentCacheCapacity),
+		firstBlockIdx: -1,
+		lastBlockIdx:  -1,
+		closed:        true,
+	}, nil
+}
+
+// Open 打开 Log
+//
+// 为了避免内存泄漏，结束使用后需要显示调用 Log.Close 关闭
+//
+// 返回值：
+//   - errs 过程中出现的错误，类型是 *errs.KvErr
+//
+// 异常：
 //   - errs.NewFlockFileErr Open 指定的dir已经被其他 Log 实例打开，
 //     此时外部应该检查这个错误并且重试其他目录路径；有小概率是因为初始化 Log
 //     实例过程中出现其他错误（会在日志中输出）之后释放目录锁导致
-//   - errs.NewInvalidParamErr 传入 opts 校验未通过，日志中有描述具体非法参数；
-//     也有可能是传入的目录路径不是一个目录
 //   - errs.NewMkdirErr 配置中目录不存在，且尝试创建目录失败
 //   - errs.NewFileStatErr 获取目录文件信息失败
 //   - errs.NewOpenFileErr 打开目录锁文件、数据失败
@@ -213,23 +239,9 @@ type Log struct {
 //   - errs.NewReadFileErr 读取 segment 文件失败
 //   - errs.NewCorruptErr  segment 数据被篡改、损坏
 //   - errs.NewBackgroundErr 这个错误不会抛出，但会出现在日志中，表示后台协程执行出错
-func Open(dirPath string, opts *Options) (_ *Log, err error) {
-	if opts == nil {
-		opts = NewOptions()
-	}
-
-	err = opts.check()
-	if err != nil {
-		return nil, err
-	}
-
-	wal := &Log{
-		dirPath:       dirPath,
-		opts:          opts,
-		segmentCache:  utils.NewLRU(opts.segmentCacheCapacity),
-		firstBlockIdx: -1,
-		lastBlockIdx:  -1,
-	}
+func (wal *Log) Open() (err error) {
+	wal.mu.Lock()
+	defer wal.mu.Unlock()
 
 	if wal.opts.noSync {
 		wal.notifier = make(chan error)
@@ -254,10 +266,11 @@ func Open(dirPath string, opts *Options) (_ *Log, err error) {
 
 	err = wal.init()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return wal, nil
+	wal.closed = false
+	return nil
 }
 
 // init 检查或创建日志目录，读日志数据文件，初始化 Log
