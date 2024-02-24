@@ -29,3 +29,13 @@ const suffix = ".active" // suffix 活跃segment文件的后缀标识
 func getBaseFormat() string {
 	return utils.GetValueOnEnv("%010d", "%08d").(string)
 }
+
+// SyncMode 持久化模式
+// 参考 https://trinoooo.github.io/eggie_kv/docs/core/ragdoll/write_ahead_log/#%E6%8C%81%E4%B9%85%E5%8C%96%E7%BA%A7%E5%88%AB
+type SyncMode int64
+
+const (
+	FullManagedSync  SyncMode = iota // 全托管 - 同步
+	FullManagedAsync                 // 全托管 - 异步
+	SelfManaged                      // 自托管
+)

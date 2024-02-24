@@ -1,3 +1,1 @@
-[submodule "doc/themes/stellar"]
-    path = doc/themes/stellar
-    url = https://github.com/xaoxuu/hexo-theme-stellar.git
+# 主要用于配置主题

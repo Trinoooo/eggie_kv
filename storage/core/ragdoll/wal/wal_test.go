@@ -216,11 +216,11 @@ var testData = [][]byte{
 // TestOptions_CheckSuccess option各项配置设置在合法范围内，check能够通过
 func TestOptions_CheckSuccess(t *testing.T) {
 	opts := NewOptions().
-		SetDataPerm(0777).
-		SetDirPerm(0777).
-		SetSegmentCapacity(10 * consts.MB).
-		SetSegmentCacheSize(100).
-		SetNoSync().
+		SetDataFilePerm(0777).
+		SetLogDirPerm(0777).
+		SetDataFileCapacity(10 * consts.MB).
+		SetDataFileCacheSize(100).
+		SetSyncMode(FullManagedSync).
 		SetSyncInterval(time.Second)
 
 	err := opts.check()
@@ -231,43 +231,43 @@ func TestOptions_CheckSuccess(t *testing.T) {
 
 // TestOptions_CheckFailed option各项配置设置在合法范围外，check无法通过
 func TestOptions_CheckFailed(t *testing.T) {
-	o1 := NewOptions().SetDataPerm(0)
+	o1 := NewOptions().SetDataFilePerm(0)
 	err := o1.check()
 	if err != nil && errs.GetCode(err) != errs.InvalidParamErrCode {
 		t.Error(err)
 	}
 
-	o2 := NewOptions().SetDataPerm(01777)
+	o2 := NewOptions().SetDataFilePerm(01777)
 	err = o2.check()
 	if err != nil && errs.GetCode(err) != errs.InvalidParamErrCode {
 		t.Error(err)
 	}
 
-	o3 := NewOptions().SetDirPerm(0)
+	o3 := NewOptions().SetLogDirPerm(0)
 	err = o3.check()
 	if err != nil && errs.GetCode(err) != errs.InvalidParamErrCode {
 		t.Error(err)
 	}
 
-	o4 := NewOptions().SetDirPerm(02777)
+	o4 := NewOptions().SetLogDirPerm(02777)
 	err = o4.check()
 	if err != nil && errs.GetCode(err) != errs.InvalidParamErrCode {
 		t.Error(err)
 	}
 
-	o5 := NewOptions().SetSegmentCacheSize(-1)
+	o5 := NewOptions().SetDataFileCacheSize(-1)
 	err = o5.check()
 	if err != nil && errs.GetCode(err) != errs.InvalidParamErrCode {
 		t.Error(err)
 	}
 
-	o6 := NewOptions().SetSegmentCapacity(consts.KB)
+	o6 := NewOptions().SetDataFileCapacity(consts.KB)
 	err = o6.check()
 	if err != nil && errs.GetCode(err) != errs.InvalidParamErrCode {
 		t.Error(err)
 	}
 
-	o7 := NewOptions().SetSegmentCapacity(2 * consts.GB)
+	o7 := NewOptions().SetDataFileCapacity(2 * consts.GB)
 	err = o7.check()
 	if err != nil && errs.GetCode(err) != errs.InvalidParamErrCode {
 		t.Error(err)
@@ -284,11 +284,11 @@ func TestOptions_CheckFailed(t *testing.T) {
 func TestLog_WriteNormal(t *testing.T) {
 	segmentSize := 100 * consts.MB
 	wal, err := NewLog(dirPath, NewOptions().
-		SetDirPerm(0770).
-		SetDataPerm(0660).
-		SetSegmentCacheSize(5).
-		SetSegmentCapacity(int64(segmentSize)).
-		SetNoSync())
+		SetLogDirPerm(0770).
+		SetDataFilePerm(0660).
+		SetDataFileCacheSize(5).
+		SetDataFileCapacity(int64(segmentSize)).
+		SetSyncMode(FullManagedAsync))
 	if err != nil {
 		t.Error(err)
 	}
@@ -299,7 +299,7 @@ func TestLog_WriteNormal(t *testing.T) {
 	}
 
 	for i := 0; i < 3e7; i++ {
-		_, err := wal.Write(testData[3])
+		err = wal.Write(testData[3])
 		if err != nil {
 			t.Error(err)
 		}
@@ -315,11 +315,11 @@ func TestLog_WriteNormal(t *testing.T) {
 func TestLog_WriteAbnormal(t *testing.T) {
 	segmentSize := 100 * consts.MB
 	wal, err := NewLog(dirPath, NewOptions().
-		SetDirPerm(0770).
-		SetDataPerm(0660).
-		SetSegmentCacheSize(5).
-		SetSegmentCapacity(int64(segmentSize)).
-		SetNoSync())
+		SetLogDirPerm(0770).
+		SetDataFilePerm(0660).
+		SetDataFileCacheSize(5).
+		SetDataFileCapacity(int64(segmentSize)).
+		SetSyncMode(FullManagedAsync))
 	if err != nil {
 		t.Error(err)
 	}
@@ -332,7 +332,7 @@ func TestLog_WriteAbnormal(t *testing.T) {
 	seed := 2001 // 保证结果可复现
 	r := rand.New(rand.NewSource(int64(seed)))
 	for i := 0; i < 1e7; i++ {
-		_, err := wal.Write(testData[r.Int()%5])
+		err = wal.Write(testData[r.Int()%5])
 		if err != nil {
 			t.Error(err)
 		}
@@ -348,11 +348,11 @@ func TestLog_WriteAbnormal(t *testing.T) {
 func TestLog_WriteFailed(t *testing.T) {
 	segmentSize := 100 * consts.MB
 	wal, err := NewLog(dirPath, NewOptions().
-		SetDirPerm(0770).
-		SetDataPerm(0660).
-		SetSegmentCacheSize(5).
-		SetSegmentCapacity(int64(segmentSize)).
-		SetNoSync())
+		SetLogDirPerm(0770).
+		SetDataFilePerm(0660).
+		SetDataFileCacheSize(5).
+		SetDataFileCapacity(int64(segmentSize)).
+		SetSyncMode(FullManagedAsync))
 	if err != nil {
 		t.Error(err)
 	}
@@ -362,7 +362,7 @@ func TestLog_WriteFailed(t *testing.T) {
 		t.Error(err)
 	}
 
-	_, err = wal.Write([]byte{})
+	err = wal.Write([]byte{})
 	if err != nil && errs.GetCode(err) != errs.InvalidParamErrCode {
 		t.Error(err)
 	}
@@ -374,20 +374,20 @@ func TestLog_WriteFailed(t *testing.T) {
 }
 
 var readIdxList = []int64{
-	0,        // 第一个segment第一个
-	0,        // 重复读
-	700000,   // 第一个segment中间
-	794374,   // 第一个segment的最后一个
-	794375,   // 第二个segment的第一个
-	23831250, // 定长记录中的随便一个segment的第一个
-	24000000, // 定长记录中的随便一个segment的中间
-	24625624, // 定长记录中的随便一个segment的最后一个
-	30507158, // 变长记录中的随便一个segment的第一个
-	30900000, // 变长记录中的随便一个segment的中间
-	30918392, // 变长记录中的随便一个segment的最后一个
-	39949649, // activeSegment中的第一个
-	39950000, // activeSegment的中间
-	39999999, // activeSegment中的最后一个
+	1,        // 第一个segment第一个
+	1,        // 重复读
+	700001,   // 第一个segment中间
+	794375,   // 第一个segment的最后一个
+	794376,   // 第二个segment的第一个
+	23831251, // 定长记录中的随便一个segment的第一个
+	24000001, // 定长记录中的随便一个segment的中间
+	24625625, // 定长记录中的随便一个segment的最后一个
+	30507159, // 变长记录中的随便一个segment的第一个
+	30900001, // 变长记录中的随便一个segment的中间
+	30918393, // 变长记录中的随便一个segment的最后一个
+	39949650, // activeSegment中的第一个
+	39950001, // activeSegment的中间
+	40000000, // activeSegment中的最后一个
 }
 
 // TestLog_Read 测试读日志
@@ -441,19 +441,19 @@ func TestLog_ReadFailed(t *testing.T) {
 }
 
 var truncateIdxList = []int64{
-	0,        // 第一个segment第一个
+	1,        // 第一个segment第一个
 	700000,   // 第一个segment中间
-	794374,   // 第一个segment的最后一个
-	794375,   // 第二个segment的第一个
-	23831250, // 定长记录中的随便一个segment的第一个
-	24000000, // 定长记录中的随便一个segment的中间
-	24625624, // 定长记录中的随便一个segment的最后一个
-	30507158, // 变长记录中的随便一个segment的第一个
-	30900000, // 变长记录中的随便一个segment的中间
-	30918392, // 变长记录中的随便一个segment的最后一个
-	39949649, // activeSegment中的第一个
-	39950000, // activeSegment的中间
-	39999999, // activeSegment中的最后一个
+	94374,    // 第一个segment的最后一个 794374 - 700000
+	1,        // 第二个segment的第一个 794375 - 794374
+	23036875, // 定长记录中的随便一个segment的第一个 23831250 - 794375
+	168750,   // 定长记录中的随便一个segment的中间 24000000 - 23831250
+	625624,   // 定长记录中的随便一个segment的最后一个 24625624 - 24000000
+	5881534,  // 变长记录中的随便一个segment的第一个 30507158 - 24625624
+	392842,   // 变长记录中的随便一个segment的中间 30900000 - 30507158
+	18392,    // 变长记录中的随便一个segment的最后一个 30918392 - 30900000
+	9031257,  // activeSegment中的第一个 39949649 - 30918392
+	351,      // activeSegment的中间 39950000 - 39949649
+	49999,    // activeSegment中的最后一个 39999999 - 39950000
 }
 
 // TestLog_Truncate 截断日志
@@ -645,7 +645,7 @@ func TestLog_Sync(t *testing.T) {
 
 	segmentSize := 100 * consts.MB
 	wal, err := NewLog(dirPath, NewOptions().
-		SetSegmentCapacity(int64(segmentSize)))
+		SetDataFileCapacity(int64(segmentSize)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -656,7 +656,7 @@ func TestLog_Sync(t *testing.T) {
 	}
 
 	for i := 0; i < 100; i++ {
-		_, err := wal.Write([]byte{1, 3, 5, 2, 4, 6})
+		err = wal.Write([]byte{1, 3, 5, 2, 4, 6})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -677,11 +677,11 @@ func TestLog_Sync(t *testing.T) {
 func TestLog_WriteNormalToFull(t *testing.T) {
 	segmentSize := 100 * consts.MB
 	wal, err := NewLog(dirPath, NewOptions().
-		SetDirPerm(0770).
-		SetDataPerm(0660).
-		SetSegmentCacheSize(5).
-		SetSegmentCapacity(int64(segmentSize)).
-		SetNoSync())
+		SetLogDirPerm(0770).
+		SetDataFilePerm(0660).
+		SetDataFileCacheSize(5).
+		SetDataFileCapacity(int64(segmentSize)).
+		SetSyncMode(FullManagedAsync))
 	if err != nil {
 		t.Error(err)
 	}
@@ -692,7 +692,7 @@ func TestLog_WriteNormalToFull(t *testing.T) {
 	}
 
 	for {
-		_, err := wal.Write(testData[3])
+		err = wal.Write(testData[3])
 		if err != nil {
 			t.Log(err)
 			break
@@ -720,11 +720,11 @@ func TestLog_ReadCycleInvalid(t *testing.T) {
 
 	segmentSize := 100 * consts.MB
 	wal, err := NewLog(dirPath, NewOptions().
-		SetDirPerm(0770).
-		SetDataPerm(0660).
-		SetSegmentCacheSize(5).
-		SetSegmentCapacity(int64(segmentSize)).
-		SetNoSync())
+		SetLogDirPerm(0770).
+		SetDataFilePerm(0660).
+		SetDataFileCacheSize(5).
+		SetDataFileCapacity(int64(segmentSize)).
+		SetSyncMode(FullManagedAsync))
 	if err != nil {
 		t.Error(err)
 	}
@@ -734,7 +734,36 @@ func TestLog_ReadCycleInvalid(t *testing.T) {
 		t.Error(err)
 	}
 
-	_, err = wal.Read(20000001)
+	_, err = wal.Read(99999990) // < 20794446
+	if err != nil {
+		t.Log(err)
+	}
+
+	err = wal.Close()
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+// TestLog_ReadInvalid 读size超过日志实例能够容纳的最大容量
+func TestLog_ReadInvalid(t *testing.T) {
+	segmentSize := 100 * consts.MB
+	wal, err := NewLog(dirPath, NewOptions().
+		SetLogDirPerm(0770).
+		SetDataFilePerm(0660).
+		SetDataFileCacheSize(5).
+		SetDataFileCapacity(int64(segmentSize)).
+		SetSyncMode(FullManagedAsync))
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = wal.Open()
+	if err != nil {
+		t.Error(err)
+	}
+
+	_, err = wal.Read(9999999999999) // < 20794446
 	if err != nil {
 		t.Log(err)
 	}
@@ -768,10 +797,10 @@ func BenchmarkWal_Write_1000byte(b *testing.B) {
 func benchmarkInner(b *testing.B, data []byte) {
 	segmentSize := 100 * consts.MB
 	wal, err := NewLog(dirPath, NewOptions().
-		SetDirPerm(0770).
-		SetDataPerm(0660).
-		SetSegmentCacheSize(5).
-		SetSegmentCapacity(int64(segmentSize)))
+		SetLogDirPerm(0770).
+		SetDataFilePerm(0660).
+		SetDataFileCacheSize(5).
+		SetDataFileCapacity(int64(segmentSize)))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -785,7 +814,7 @@ func benchmarkInner(b *testing.B, data []byte) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := wal.Write(data)
+		err = wal.Write(data)
 		if err != nil {
 			b.Fatal(err)
 		}
