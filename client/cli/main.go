@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/Trinoooo/eggie_kv/cli/handle"
+	"github.com/Trinoooo/eggie_kv/client/cli/handle"
 	"io"
 	"log"
 	"net/http"

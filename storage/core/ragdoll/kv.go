@@ -8,19 +8,21 @@ import (
 	"sync"
 )
 
+var _ iface.ICore = (*KV)(nil)
+
 type KV struct {
-	Config    *viper.Viper
-	Data      *Data
+	Config *viper.Viper
+	// Data      *Data
 	Wal       *wal.Log
 	BatchPool sync.Pool
 	Chan      *Channel
 }
 
 func New(config *viper.Viper) (iface.ICore, error) {
-	data, err := NewData("")
-	if err != nil {
-		return nil, err
-	}
+	//data, err := NewData("")
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	wal, err := wal.NewLog("123", wal.NewOptions())
 	if err != nil {
@@ -34,8 +36,8 @@ func New(config *viper.Viper) (iface.ICore, error) {
 
 	kv := &KV{
 		Config: config,
-		Data:   data,
-		Wal:    wal,
+		// Data:   data,
+		Wal: wal,
 		BatchPool: sync.Pool{
 			New: NewBatch,
 		},
