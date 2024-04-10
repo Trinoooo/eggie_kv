@@ -30,25 +30,25 @@ const (
 	MESSAGE_TYPE_ONEWAY
 )
 
-type FieldType byte
+type TType byte
 
 const (
-	FIELD_TYPE_STOP   = 0
-	FIELD_TYPE_VOID   = 1
-	FIELD_TYPE_BOOL   = 2
-	FIELD_TYPE_BYTE   = 3
-	FIELD_TYPE_I08    = 3
-	FIELD_TYPE_DOUBLE = 4
-	FIELD_TYPE_I16    = 6
-	FIELD_TYPE_I32    = 8
-	FIELD_TYPE_I64    = 10
-	FIELD_TYPE_STRING = 11
-	FIELD_TYPE_UTF7   = 11
-	FIELD_TYPE_STRUCT = 12
-	FIELD_TYPE_MAP    = 13
-	FIELD_TYPE_SET    = 14
-	FIELD_TYPE_LIST   = 15
-	FIELD_TYPE_UUID   = 16
+	TTYPE_STOP   = 0
+	TTYPE_VOID   = 1
+	TTYPE_BOOL   = 2
+	TTYPE_BYTE   = 3
+	TTYPE_I08    = 3
+	TTYPE_DOUBLE = 4
+	TTYPE_I16    = 6
+	TTYPE_I32    = 8
+	TTYPE_I64    = 10
+	TTYPE_STRING = 11
+	TTYPE_UTF7   = 11
+	TTYPE_STRUCT = 12
+	TTYPE_MAP    = 13
+	TTYPE_SET    = 14
+	TTYPE_LIST   = 15
+	TTYPE_UUID   = 16
 )
 
 var _ IProtocol = &BinaryProtocol{}
@@ -58,14 +58,14 @@ type IProtocol interface {
 	WriteMessageEnd() error
 	WriteStructBegin(name string) error
 	WriteStructEnd() error
-	WriteFieldBegin(name string, ftype FieldType, fieldId int16) error
+	WriteFieldBegin(name string, typeId TType, fieldId int16) error
 	WriteFieldEnd() error
 	WriteFieldStop() error
-	WriteMapBegin(ktype, vtype FieldType, size int32) error
+	WriteMapBegin(ktype, vtype TType, size int32) error
 	WriteMapEnd() error
-	WriteListBegin(etype FieldType, size int32) error
+	WriteListBegin(etype TType, size int32) error
 	WriteListEnd() error
-	WriteSetBegin(etype FieldType, size int32) error
+	WriteSetBegin(etype TType, size int32) error
 	WriteSetEnd() error
 	WriteBool(v bool) error
 	WriteByte(v byte) error
@@ -79,13 +79,13 @@ type IProtocol interface {
 	ReadMessageEnd() error
 	ReadStructBegin() (name string, err error)
 	ReadStructEnd() error
-	ReadFieldBegin() (name string, ftype FieldType, fieldId int16, err error)
+	ReadFieldBegin() (name string, typeId TType, fieldId int16, err error)
 	ReadFieldEnd() error
-	ReadMapBegin() (ktype FieldType, vtype FieldType, size int32, err error)
+	ReadMapBegin() (ktype TType, vtype TType, size int32, err error)
 	ReadMapEnd() error
-	ReadListBegin() (etype FieldType, size int32, err error)
+	ReadListBegin() (etype TType, size int32, err error)
 	ReadListEnd() error
-	ReadSetBegin() (etype FieldType, size int32, err error)
+	ReadSetBegin() (etype TType, size int32, err error)
 	ReadSetEnd() error
 	ReadBool() (bool, error)
 	ReadByte() (byte, error)
@@ -94,6 +94,11 @@ type IProtocol interface {
 	ReadI64() (int64, error)
 	ReadDouble() (float64, error)
 	ReadString() (string, error)
+
+	// 这三个在官方文档描述的接口中没有，但源码中存在。
+	Skip(typeId TType) error
+	Flush() error
+	Transport() ITransport
 }
 
 type BinaryProtocol struct {
@@ -152,8 +157,8 @@ Binary protocol stop field:
 +--------+
 */
 
-func (b *BinaryProtocol) WriteFieldBegin(name string, ftype FieldType, fieldId int16) error {
-	err := b.WriteByte(byte(ftype))
+func (b *BinaryProtocol) WriteFieldBegin(name string, typeId TType, fieldId int16) error {
+	err := b.WriteByte(byte(typeId))
 	if err != nil {
 		return err
 	}
@@ -171,7 +176,7 @@ func (b *BinaryProtocol) WriteFieldEnd() error {
 }
 
 func (b *BinaryProtocol) WriteFieldStop() error {
-	return b.WriteByte(FIELD_TYPE_STOP)
+	return b.WriteByte(TTYPE_STOP)
 }
 
 /*
@@ -181,7 +186,7 @@ Binary protocol map (6+ bytes) and key value pairs:
 +--------+--------+--------+--------+--------+--------+--------+...+--------+
 */
 
-func (b *BinaryProtocol) WriteMapBegin(ktype, vtype FieldType, size int32) error {
+func (b *BinaryProtocol) WriteMapBegin(ktype, vtype TType, size int32) error {
 	err := b.WriteByte(byte(ktype))
 	if err != nil {
 		return err
@@ -211,7 +216,7 @@ Binary protocol list (5+ bytes) and elements:
 +--------+--------+--------+--------+--------+--------+...+--------+
 */
 
-func (b *BinaryProtocol) WriteListBegin(etype FieldType, size int32) error {
+func (b *BinaryProtocol) WriteListBegin(etype TType, size int32) error {
 	err := b.WriteByte(byte(etype))
 	if err != nil {
 		return err
@@ -236,7 +241,7 @@ Binary protocol set (5+ bytes) and elements:
 +--------+--------+--------+--------+--------+--------+...+--------+
 */
 
-func (b *BinaryProtocol) WriteSetBegin(etype FieldType, size int32) error {
+func (b *BinaryProtocol) WriteSetBegin(etype TType, size int32) error {
 	err := b.WriteByte(byte(etype))
 	if err != nil {
 		return err
@@ -379,18 +384,18 @@ Binary protocol stop field:
 +--------+
 */
 
-func (b *BinaryProtocol) ReadFieldBegin() (name string, ftype FieldType, fieldId int16, err error) {
+func (b *BinaryProtocol) ReadFieldBegin() (name string, typeId TType, fieldId int16, err error) {
 	ft, err := b.ReadByte()
 	if err != nil {
-		return "", FIELD_TYPE_STOP, 0, err
+		return "", TTYPE_STOP, 0, err
 	}
 
 	fieldId, err = b.ReadI16()
 	if err != nil {
-		return "", FIELD_TYPE_STOP, 0, err
+		return "", TTYPE_STOP, 0, err
 	}
 
-	return name, FieldType(ft), fieldId, nil
+	return name, TType(ft), fieldId, nil
 }
 
 func (b *BinaryProtocol) ReadFieldEnd() error {
@@ -404,23 +409,23 @@ Binary protocol map (6+ bytes) and key value pairs:
 +--------+--------+--------+--------+--------+--------+--------+...+--------+
 */
 
-func (b *BinaryProtocol) ReadMapBegin() (ktype FieldType, vtype FieldType, size int32, err error) {
+func (b *BinaryProtocol) ReadMapBegin() (ktype TType, vtype TType, size int32, err error) {
 	kt, err := b.ReadByte()
 	if err != nil {
-		return FIELD_TYPE_STOP, FIELD_TYPE_STOP, 0, err
+		return TTYPE_STOP, TTYPE_STOP, 0, err
 	}
 
 	vt, err := b.ReadByte()
 	if err != nil {
-		return FIELD_TYPE_STOP, FIELD_TYPE_STOP, 0, err
+		return TTYPE_STOP, TTYPE_STOP, 0, err
 	}
 
 	size, err = b.ReadI32()
 	if err != nil {
-		return FIELD_TYPE_STOP, FIELD_TYPE_STOP, 0, err
+		return TTYPE_STOP, TTYPE_STOP, 0, err
 	}
 
-	return FieldType(kt), FieldType(vt), size, nil
+	return TType(kt), TType(vt), size, nil
 }
 
 func (b *BinaryProtocol) ReadMapEnd() error {
@@ -434,18 +439,18 @@ Binary protocol list (5+ bytes) and elements:
 +--------+--------+--------+--------+--------+--------+...+--------+
 */
 
-func (b *BinaryProtocol) ReadListBegin() (etype FieldType, size int32, err error) {
+func (b *BinaryProtocol) ReadListBegin() (etype TType, size int32, err error) {
 	et, err := b.ReadByte()
 	if err != nil {
-		return FIELD_TYPE_STOP, 0, err
+		return TTYPE_STOP, 0, err
 	}
 
 	size, err = b.ReadI32()
 	if err != nil {
-		return FIELD_TYPE_STOP, 0, err
+		return TTYPE_STOP, 0, err
 	}
 
-	return FieldType(et), size, nil
+	return TType(et), size, nil
 }
 
 func (b *BinaryProtocol) ReadListEnd() error {
@@ -459,18 +464,18 @@ Binary protocol set (5+ bytes) and elements:
 +--------+--------+--------+--------+--------+--------+...+--------+
 */
 
-func (b *BinaryProtocol) ReadSetBegin() (etype FieldType, size int32, err error) {
+func (b *BinaryProtocol) ReadSetBegin() (etype TType, size int32, err error) {
 	et, err := b.ReadByte()
 	if err != nil {
-		return FIELD_TYPE_STOP, 0, err
+		return TTYPE_STOP, 0, err
 	}
 
 	size, err = b.ReadI32()
 	if err != nil {
-		return FIELD_TYPE_STOP, 0, err
+		return TTYPE_STOP, 0, err
 	}
 
-	return FieldType(et), size, nil
+	return TType(et), size, nil
 }
 
 func (b *BinaryProtocol) ReadSetEnd() error {
@@ -559,6 +564,96 @@ func (b *BinaryProtocol) ReadBytes(v []byte) error {
 		read += n
 	}
 	return nil
+}
+
+func (b *BinaryProtocol) Flush() error {
+	return b.trans.Flush()
+}
+
+func (b *BinaryProtocol) Skip(typeId TType) (err error) {
+	switch typeId {
+	case TTYPE_STOP, TTYPE_VOID:
+	case TTYPE_BOOL:
+		_, err = b.ReadBool()
+	case TTYPE_BYTE:
+		_, err = b.ReadByte()
+	case TTYPE_DOUBLE:
+		_, err = b.ReadDouble()
+	case TTYPE_I16:
+		_, err = b.ReadI16()
+	case TTYPE_I32:
+		_, err = b.ReadI32()
+	case TTYPE_I64:
+		_, err = b.ReadI64()
+	case TTYPE_STRING:
+		_, err = b.ReadString()
+	case TTYPE_STRUCT:
+		_, err := b.ReadStructBegin()
+		if err != nil {
+			return err
+		}
+		for {
+			_, fieldType, _, err := b.ReadFieldBegin()
+			if err != nil {
+				return err
+			}
+
+			if fieldType == TTYPE_STOP {
+				break
+			}
+
+			err = b.ReadFieldEnd()
+			if err != nil {
+				return err
+			}
+		}
+		err = b.ReadMessageEnd()
+	case TTYPE_MAP:
+		ktype, vtype, size, err := b.ReadMapBegin()
+		if err != nil {
+			return err
+		}
+		for i := int32(0); i < size; i++ {
+			err = b.Skip(ktype)
+			if err != nil {
+				return err
+			}
+			err = b.Skip(vtype)
+			if err != nil {
+				return err
+			}
+		}
+		err = b.ReadMapEnd()
+	case TTYPE_SET:
+		etype, size, err := b.ReadSetBegin()
+		if err != nil {
+			return err
+		}
+		for i := int32(0); i < size; i++ {
+			err = b.Skip(etype)
+			if err != nil {
+				return err
+			}
+		}
+		err = b.ReadSetEnd()
+	case TTYPE_LIST:
+		etype, size, err := b.ReadListBegin()
+		if err != nil {
+			return err
+		}
+		for i := int32(0); i < size; i++ {
+			err = b.Skip(etype)
+			if err != nil {
+				return err
+			}
+		}
+		err = b.ReadListEnd()
+	}
+	return err
+}
+
+func (b *BinaryProtocol) Transport() ITransport {
+	return b.trans
 }
 
 type BinaryProtocolFactory struct {

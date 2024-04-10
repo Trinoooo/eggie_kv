@@ -4,15 +4,19 @@ import (
 	"fmt"
 	"github.com/Trinoooo/eggie_kv/consts"
 	"github.com/Trinoooo/eggie_kv/errs"
+	"github.com/Trinoooo/eggie_kv/storage/core"
+	"github.com/Trinoooo/eggie_kv/storage/core/iface"
 	"github.com/Trinoooo/eggie_kv/storage/core/ragdoll/logs"
 	"github.com/Trinoooo/eggie_kv/storage/server"
+	"github.com/spf13/viper"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/zap"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 )
+
+var Core iface.ICore
 
 var (
 	flagHost = &cli.StringFlag{
@@ -76,6 +80,47 @@ var (
 	}
 )
 
+func initServer(addr string) (*server.SimpleServer, error) {
+	handler := server.NewEggieKvHandlerImpl()
+	processor := server.NewKvProcessor(handler)
+	serverTransport, err := server.NewBaseServerTransport(addr)
+	if err != nil {
+		return nil, err
+	}
+	return server.NewSimpleServer(
+		processor,
+		serverTransport,
+		server.NewFramedTransportFactory(),
+		server.NewFramedTransportFactory(),
+		server.NewBinaryProtocolFactory(),
+		server.NewBinaryProtocolFactory(),
+	), nil
+}
+
+func initCore(cfg *viper.Viper) {
+	coreBuilder, exist := core.BuilderMap[cfg.GetString(consts.Core)]
+	if !exist {
+		panic(exist)
+	}
+	c, err := coreBuilder(cfg)
+	if err != nil {
+		panic(exist)
+	}
+	Core = c
+}
+
+func initCfg() (*viper.Viper, error) {
+	cfg := viper.New()
+	cfg.AddConfigPath(consts.DefaultConfigPath)
+	cfg.SetConfigName("config")
+	cfg.SetConfigType("yaml")
+	err := cfg.ReadInConfig()
+	if err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
 type Wrapper struct {
 	app *cli.App
 }
@@ -118,24 +163,30 @@ func (wrapper *Wrapper) withFlags() {
 
 func (wrapper *Wrapper) withAction() {
 	wrapper.app.Action = func(ctx *cli.Context) error {
-		srv, err := server.NewServer()
+		cfg, err := initCfg()
 		if err != nil {
 			return err
 		}
-
-		http.HandleFunc("/", srv.Server)
+		initCore(cfg)
+		addr := fmt.Sprintf("%s:%d", ctx.String("host"), ctx.Int64("port"))
+		srv, err := initServer(addr)
+		if err != nil {
+			return err
+		}
 		go func() {
-			addr := fmt.Sprintf("%s:%d", ctx.String("host"), ctx.Int64("port"))
-			if err := http.ListenAndServe(addr, nil); err != nil {
-				// 父协程没recover也会一起panic，导致程序崩溃
-				logs.Fatal(err.Error())
+			// bugfix: 使用缓冲通道避免执行信号处理程序（下面的for）之前有信号到达会被丢弃
+			sig := make(chan os.Signal, 5)
+			signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+			for range sig {
+				err := srv.Close()
+				if err != nil {
+					logs.Info(err.Error())
+				}
 			}
 		}()
-		// bugfix: 使用缓冲通道避免执行信号处理程序（下面的for）之前有信号到达会被丢弃
-		sig := make(chan os.Signal, 5)
-		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-		for range sig {
-			logs.Info("shutdown...")
+		err = srv.Serve()
+		if err != nil {
+			return err
 		}
 		return nil
 	}

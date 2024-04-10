@@ -12,6 +12,6 @@ func TestServerTransport(t *testing.T) {
 	err = serverTransport.Listen()
 	assert.Nil(t, err)
 
-	tp, err := serverTransport.Accept()
+	_, err = serverTransport.Accept()
 	assert.Nil(t, err)
 }

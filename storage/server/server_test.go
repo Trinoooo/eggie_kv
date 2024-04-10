@@ -8,8 +8,11 @@ import (
 func TestNewEServer(t *testing.T) {
 	serverTransport, err := NewBaseServerTransport("")
 	assert.Nil(t, err)
+	processor := NewKvProcessor()
+	processor.Register("Get", HandleGet)
+	processor.Register("Set", HandleSet)
 	_ = NewSimpleServer(
-		nil,
+		processor,
 		serverTransport,
 		NewBufferedTransportFactory(1),
 		NewFramedTransportFactory(),
