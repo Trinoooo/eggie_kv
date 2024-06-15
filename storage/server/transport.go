@@ -2,10 +2,97 @@ package server
 
 import (
 	"bufio"
+	"errors"
 	"net"
+	"syscall"
+	"time"
 )
 
-var _ IServerTransport = &BaseServerTransport{}
+type connWrapper struct {
+	conn net.Conn
+}
+
+func (w *connWrapper) Read(b []byte) (n int, err error) {
+	return w.conn.Read(b)
+}
+
+func (w *connWrapper) Write(b []byte) (n int, err error) {
+	return w.Write(b)
+}
+
+func (w *connWrapper) Close() error {
+	defer func() {
+		w.conn = nil
+	}()
+	return w.conn.Close()
+}
+
+func (w *connWrapper) LocalAddr() net.Addr {
+	return w.conn.LocalAddr()
+}
+
+func (w *connWrapper) RemoteAddr() net.Addr {
+	return w.conn.RemoteAddr()
+}
+
+func (w *connWrapper) SetDeadline(t time.Time) error {
+	return w.conn.SetDeadline(t)
+}
+
+func (w *connWrapper) SetReadDeadline(t time.Time) error {
+	return w.conn.SetReadDeadline(t)
+}
+
+func (w *connWrapper) SetWriteDeadline(t time.Time) error {
+	return w.conn.SetWriteDeadline(t)
+}
+
+// isValid nil-safe
+func (w *connWrapper) isValid() bool {
+	return w != nil && w.conn != nil
+}
+
+func (w *connWrapper) checkConnectivity() bool {
+	rawConn, ok := w.conn.(syscall.Conn)
+	if !ok {
+		return false
+	}
+
+	syscallConn, err := rawConn.SyscallConn()
+	if err != nil {
+		return false
+	}
+
+	var (
+		n int
+		e error
+	)
+	err = syscallConn.Read(func(fd uintptr) (done bool) {
+		buf := make([]byte, 1)
+		n, _, e = syscall.Recvfrom(int(fd), buf, syscall.MSG_PEEK|syscall.MSG_DONTWAIT)
+		return true
+	})
+	if err != nil {
+		if errors.Is(err, net.ErrClosed) {
+			w.conn.Close()
+		}
+		return false
+	}
+
+	return n == 0 && e == nil
+}
+
+func (w *connWrapper) IsOpen() bool {
+	return !w.isValid() && w.checkConnectivity()
+}
+
+func newConnWrapper(conn net.Conn) *connWrapper {
+	return &connWrapper{
+		conn: conn,
+	}
+}
+
+var _ IServerTransport = (*BaseServerTransport)(nil)
 
 type IServerTransport interface {
 	Listen() error
@@ -58,19 +145,20 @@ func (bst *BaseServerTransport) Close() error {
 	return bst.listener.Close()
 }
 
-var _ ITransport = &BaseTransport{}
-var _ ITransport = &BufferedTransport{}
-var _ ITransport = &FramedTransport{}
+var _ ITransport = (*BaseTransport)(nil)
+var _ ITransport = (*BufferedTransport)(nil)
+var _ ITransport = (*FramedTransport)(nil)
 
 type ITransport interface {
 	Close() error
 	Read(buf []byte) (int, error)
 	Write(buf []byte) (int, error)
 	Flush() error
+	IsOpen() bool
 }
 
 type BaseTransport struct {
-	conn net.Conn
+	conn *connWrapper
 	cfg  *TConfig
 }
 
@@ -88,6 +176,10 @@ func (bt *BaseTransport) Write(buf []byte) (int, error) {
 
 func (bt *BaseTransport) Flush() error {
 	return nil
+}
+
+func (bt *BaseTransport) IsOpen() bool {
+	return bt.conn.IsOpen()
 }
 
 type BaseTransportFactory struct {
@@ -110,7 +202,7 @@ func NewBaseTransportFactoryConf(cfg *TConfig) *BaseTransportFactory {
 
 func (b *BaseTransportFactory) Build(conn net.Conn) ITransport {
 	return &BaseTransport{
-		conn: conn,
+		conn: newConnWrapper(conn),
 		cfg:  b.cfg,
 	}
 }
@@ -144,6 +236,10 @@ func (bt *BufferedTransport) Write(buf []byte) (int, error) {
 
 func (bt *BufferedTransport) Flush() error {
 	return bt.readWriter.Flush()
+}
+
+func (bt *BufferedTransport) IsOpen() bool {
+	return bt.trans.IsOpen()
 }
 
 type BufferedTransportFactory struct {
@@ -186,6 +282,10 @@ func (ft *FramedTransport) Flush() error {
 	return nil
 }
 
+func (ft *FramedTransport) IsOpen() bool {
+	return ft.trans.IsOpen()
+}
+
 type FramedTransportFactory struct {
 }
 
@@ -199,8 +299,8 @@ func (f *FramedTransportFactory) Build(trans ITransport) ITransport {
 	}
 }
 
-var _ ITransportFactory = &BufferedTransportFactory{}
-var _ ITransportFactory = &FramedTransportFactory{}
+var _ ITransportFactory = (*BufferedTransportFactory)(nil)
+var _ ITransportFactory = (*FramedTransportFactory)(nil)
 
 type ITransportFactory interface {
 	Build(trans ITransport) ITransport

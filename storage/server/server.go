@@ -27,6 +27,7 @@ func NewSimpleServer(
 	itranFactory, otranFactory ITransportFactory,
 	iprotFactory, oprotFactory IProtocolFactory,
 ) *SimpleServer {
+	CheckConnectionInterval = 1 * time.Second
 	return &SimpleServer{
 		cfg: &TConfig{
 			ServerStopTimeout: time.Duration(0),
@@ -72,7 +73,7 @@ func (s *SimpleServer) serve(trans ITransport) {
 	go func() {
 		defer s.wg.Done()
 		defer cancel()
-		_ = s.processLoop(trans)
+		_ = s.processLoop(ctx, trans)
 		// todo：打日志，而不是返回错误。
 	}()
 
@@ -90,11 +91,11 @@ func (s *SimpleServer) serve(trans ITransport) {
 	}()
 }
 
-func (s *SimpleServer) processLoop(trans ITransport) error {
+func (s *SimpleServer) processLoop(ctx context.Context, trans ITransport) error {
 	for {
 		iprot := s.iprotFactory.Build(s.itranFactory.Build(trans))
 		oprot := s.oprotFactory.Build(s.otranFactory.Build(trans))
-		ok, err := s.processor.Process(iprot, oprot)
+		ok, err := s.processor.Process(ctx, iprot, oprot)
 		if !ok || err != nil {
 			// todo： 补充链接关闭特判
 			return err

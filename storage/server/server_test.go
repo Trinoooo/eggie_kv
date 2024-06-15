@@ -5,12 +5,18 @@ import (
 	"testing"
 )
 
+const (
+	addr = "localhost"
+	host = "9999"
+
+	fixSize     = 8
+	concurrency = 1
+)
+
 func TestNewEServer(t *testing.T) {
 	serverTransport, err := NewBaseServerTransport("")
 	assert.Nil(t, err)
-	processor := NewKvProcessor()
-	processor.Register("Get", HandleGet)
-	processor.Register("Set", HandleSet)
+	processor := NewKvProcessor(new(EggieKvHandlerImpl)) // 似乎用new关键字搞个空指针更省空间
 	_ = NewSimpleServer(
 		processor,
 		serverTransport,
