@@ -3,10 +3,12 @@ module github.com/Trinoooo/eggie_kv
 go 1.19
 
 require (
-	github.com/bytedance/gopkg v0.0.0-20231219111115-a5eedbe96960
+	github.com/bytedance/gopkg v0.0.0-20240507064146-197ded923ae3
 	github.com/chzyer/readline v1.5.1
+	github.com/cloudwego/netpoll v0.6.1
 	github.com/luci/go-render v0.0.0-20160219211803-9a04cc21af0f
 	github.com/mitchellh/go-homedir v1.1.0
+	github.com/pkg/errors v0.9.1
 	github.com/spf13/viper v1.18.2
 	github.com/urfave/cli/v2 v2.26.0
 	go.uber.org/zap v1.26.0

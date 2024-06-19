@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/Trinoooo/eggie_kv/storage/logs"
 	"github.com/spf13/viper"
 	"io"
+	"net"
 	"net/http"
 )
 
@@ -154,3 +156,5 @@ func newSuccessResp(data []byte) *consts.KvResponse {
 		Data:    data,
 	}
 }
+
+type simpleHandler func(ctx context.Context, conn net.Conn)
