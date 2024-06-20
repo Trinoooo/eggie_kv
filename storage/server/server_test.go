@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/binary"
-	"github.com/cloudwego/netpoll"
 	"log"
 	"net"
 	"net/http"
@@ -18,7 +17,7 @@ const (
 
 	fixSize = 8
 
-	concurrency = 18
+	concurrency = 30
 )
 
 func TestMain(m *testing.M) {
@@ -61,20 +60,20 @@ func shortConnection(t *testing.T, buf []byte) {
 		t.Error(e)
 		return
 	}
-	log.Println("[short] client send request successfully")
+	log.Println("[short] client send request successfully", conn.RemoteAddr(), conn.LocalAddr())
 	innerBuf := make([]byte, 8)
 	_, e = conn.Read(innerBuf)
 	if e != nil {
 		t.Error(e)
 		return
 	}
-	log.Println("[short] client recv response successfully")
+	log.Println("[short] client recv response successfully", conn.RemoteAddr(), conn.LocalAddr())
 	e = conn.Close()
 	if e != nil {
 		t.Error(e)
 		return
 	}
-	log.Println("[short] client close connection")
+	log.Println("[short] client close connection", conn.RemoteAddr(), conn.LocalAddr())
 }
 
 func longConnection(t *testing.T, buf []byte) {
@@ -89,24 +88,24 @@ func longConnection(t *testing.T, buf []byte) {
 			t.Error(e)
 			return
 		}
-		log.Println("[long] client send request successfully")
+		log.Println("[long] client send request successfully", conn.RemoteAddr(), conn.LocalAddr())
 		innerBuf := make([]byte, 8)
 		_, e = conn.Read(innerBuf)
 		if e != nil {
 			t.Error(e)
 			return
 		}
-		log.Println("[long] client recv response successfully")
+		log.Println("[long] client recv response successfully", conn.RemoteAddr(), conn.LocalAddr())
 	}
 	e := conn.Close()
 	if e != nil {
 		t.Error(e)
 		return
 	}
-	log.Println("[long] client close connection")
+	log.Println("[long] client close connection", conn.RemoteAddr(), conn.LocalAddr())
 }
 
-func commonHandler(conn net.Conn, t *testing.T) {
+func commonHandler(conn *Conn, t *testing.T) {
 	buf := make([]byte, fixSize)
 	_, err := conn.Read(buf)
 	if err != nil {
@@ -131,46 +130,13 @@ func bizLogic(v uint64) uint64 {
 	return v
 }
 
-func TestPureGoroutineServer(t *testing.T) {
-	return
-	server, err := NewPureGoroutineServer(addr, func(ctx context.Context, conn net.Conn) {
-		commonHandler(conn, t)
-	})
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	go mockClient(t, server.Close)
-	err = server.Serve()
-	if err != nil {
-		t.Error(err)
-	}
-}
-
-func TestNetpollEventLoopServer(t *testing.T) {
-	return
-	server, err := NewNetpollEventLoopServer(addr, func(ctx context.Context, connection netpoll.Connection) error {
-		commonHandler(connection, t)
-		return nil
-	})
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	go mockClient(t, server.Close)
-	err = server.Serve()
-	if err != nil {
-		t.Error(err)
-	}
-}
-
 func TestReactorServer(t *testing.T) {
 	// 启动性能分析服务器
 	go func() {
 		log.Println(http.ListenAndServe("localhost:6060", nil))
 	}()
 
-	server, err := NewReactorServer(addr, func(ctx context.Context, conn net.Conn) {
+	server, err := NewReactorServer([4]byte{127, 0, 0, 1}, 9999, func(ctx context.Context, conn *Conn) {
 		commonHandler(conn, t)
 	})
 	if err != nil {

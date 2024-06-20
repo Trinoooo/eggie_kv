@@ -2,11 +2,11 @@ package server
 
 import (
 	"context"
+	"github.com/Trinoooo/eggie_kv/storage/server/poller"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/pkg/errors"
 	"log"
 	"math/rand"
-	"net"
 	"sync"
 	"syscall"
 	"time"
@@ -15,7 +15,7 @@ import (
 
 type ReactorServer struct {
 	mutex           sync.Mutex
-	serverTransport net.Listener
+	serverTransport *Listener
 	bizHandler      simpleHandler
 	pool            gopool.Pool
 	dp              *dispatcher
@@ -24,28 +24,23 @@ type ReactorServer struct {
 	done            sync.WaitGroup
 }
 
-type connWrapper struct {
-	tcpConn *net.TCPConn
-	fd      *uintptr
-}
-
 type reactor struct {
-	id       int64
-	connects chan *connWrapper
 	srv      *ReactorServer
+	id       int64
+	connects chan *Conn
 	w        *waiter
-	poller   poller
+	p        poller.Poller
 }
 
-func newReactor(id int64, srv *ReactorServer, poller poller) *reactor {
+func newReactor(id int64, srv *ReactorServer, p poller.Poller) *reactor {
 	r := &reactor{
 		srv:      srv,
 		id:       id,
-		connects: make(chan *connWrapper),
-		poller:   poller,
+		connects: make(chan *Conn),
+		p:        p,
 		w: &waiter{
-			events: make(chan pevent),
-			poller: poller,
+			events: make(chan poller.Pevent),
+			p:      p,
 		},
 	}
 	r.w.parent = r
@@ -61,44 +56,35 @@ func (r *reactor) run() {
 	r.srv.pool.Go(r.w.run)
 	for {
 		select {
-		case wrapper, ok := <-connects:
+		case conn, ok := <-connects:
+			log.Printf("reactor #%d receive output connection", r.id)
 			// output been close by dispatcher
 			if !ok {
-				log.Printf("reactor #%d ready to closes kqfd", r.id)
-				if e := r.poller.close(); e != nil {
-					log.Printf("reactor #%d close poller failed. err: %v", r.id, e)
+				log.Printf("reactor #%d ready to closes poller", r.id)
+				if e := r.p.Close(); e != nil {
+					log.Printf("reactor #%d close p failed. err: %v", r.id, e)
 				}
 				connects = nil
 				log.Printf("reactor #%d output set to nil", r.id)
 				continue
 			}
-			log.Printf("reactor #%d receive output connection", r.id)
-			// get wrapper file descriptor
-			if wrapper.fd == nil {
-				file, err := wrapper.tcpConn.File()
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-				fd := file.Fd()
-				wrapper.fd = &fd
-			}
 
-			log.Printf("reactor #%d ready to register event, wrapper fd: %v", r.id, uint64(*wrapper.fd))
+			log.Printf("reactor #%d ready to register event, wrapper fd: %v", r.id, uint64(conn.fd))
 
-			changes := []pevent{{
-				connFd:    uint64(*wrapper.fd),
-				operation: syscall.EVFILT_READ,
-				flag:      syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT, // edge trigger mode
-				userData:  (*byte)(unsafe.Pointer(wrapper)),
+			changes := []poller.Pevent{{
+				ConnFd:    uint64(conn.fd),
+				Operation: syscall.EVFILT_READ,
+				Flag:      syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT, // edge trigger mode
+				UserData:  (*byte)(unsafe.Pointer(conn)),
 			}}
-			// register event to kqueue
-			if err := r.poller.register(changes); err != nil {
-				e := wrapper.tcpConn.Close()
+			// register event to poller
+			if err := r.p.Register(changes); err != nil {
+				e := conn.Close()
 				if e != nil {
 					err = errors.Wrap(err, e.Error())
 				}
-				log.Println(err, changes, wrapper.tcpConn.RemoteAddr(), wrapper.tcpConn.LocalAddr())
+				// log.Println(err, changes, conn.RemoteAddr(), wrapper.tcpConn.LocalAddr())
+				log.Println(err, changes)
 				continue
 			}
 
@@ -116,34 +102,34 @@ func (r *reactor) run() {
 			ctx, cancel := context.WithTimeout(context.Background(), processTimeout)
 			r.srv.done.Add(2)
 			r.srv.pool.Go(func() {
-				wrapper := (*connWrapper)(unsafe.Pointer(evt.userData))
-				r.srv.handler(ctx, cancel, wrapper)
+				conn := (*Conn)(unsafe.Pointer(evt.UserData))
+				r.srv.handler(ctx, cancel, conn)
 			})
 			r.srv.pool.Go(func() { r.srv.notifier(ctx, cancel) })
 		}
 	}
 }
 
-func (r *reactor) input() chan<- *connWrapper {
+func (r *reactor) input() chan<- *Conn {
 	return r.connects
 }
 
 type waiter struct {
-	events chan pevent
+	events chan poller.Pevent
 	parent *reactor
-	poller poller
+	p      poller.Poller
 }
 
 func (w *waiter) run() {
 	log.Printf("waiter #%d start", w.parent.id)
 	defer w.parent.srv.done.Done()
 	// event buf
-	evts := make([]pevent, 10)
+	evts := make([]poller.Pevent, 10)
 	for {
 		log.Printf("waiter #%d ready to wait event trigger", w.parent.id)
 
 		// wait for event to be trigger
-		n, err := w.poller.wait(evts)
+		n, err := w.p.Wait(evts)
 		if err != nil {
 			log.Printf("waiter #%d stop, err: %v", w.parent.id, err)
 			close(w.events)
@@ -155,9 +141,9 @@ func (w *waiter) run() {
 		for i := 0; i < n; i++ {
 			evt := evts[i]
 			switch {
-			// we do not care about eof
-			case evt.flag&syscall.EV_EOF != 0:
-				log.Printf("waiter #%d meet eof, skip", w.parent.id)
+			case evt.Flag&syscall.EV_EOF != 0:
+				conn := (*Conn)(unsafe.Pointer(evt.UserData))
+				log.Printf("waiter #%d meet eof, server close connection, err: %v", w.parent.id, conn.Close())
 			default:
 				w.events <- evt
 				log.Printf("waiter #%d sent evt to reactor success", w.parent.id)
@@ -166,82 +152,8 @@ func (w *waiter) run() {
 	}
 }
 
-func (w *waiter) output() <-chan pevent {
+func (w *waiter) output() <-chan poller.Pevent {
 	return w.events
-}
-
-type pevent struct {
-	connFd    uint64
-	operation int64
-	flag      int64
-	userData  *byte
-}
-
-type poller interface {
-	register(changes []pevent) error
-	wait(events []pevent) (int, error)
-	close() error
-}
-
-type kqueuePoller struct {
-	kq *int
-}
-
-func newKqueuePoller() (*kqueuePoller, error) {
-	kqFd, err := syscall.Kqueue()
-	if err != nil {
-		return nil, err
-	}
-
-	return &kqueuePoller{
-		kq: &kqFd,
-	}, nil
-}
-
-func (kp *kqueuePoller) register(changes []pevent) error {
-	kchanges := kp.fromPevent(changes)
-	_, err := syscall.Kevent(*kp.kq, kchanges, nil, nil)
-	return err
-}
-
-func (kp *kqueuePoller) wait(events []pevent) (int, error) {
-	kevents := kp.fromPevent(events)
-	n, err := syscall.Kevent(*kp.kq, nil, kevents, nil)
-	if err != nil {
-		return 0, err
-	}
-	kp.toPevent(kevents, events)
-	return n, nil
-}
-
-func (kp *kqueuePoller) fromPevent(events []pevent) []syscall.Kevent_t {
-	kevents := make([]syscall.Kevent_t, 0, len(events))
-	for _, pevt := range events {
-		kevents = append(kevents, syscall.Kevent_t{
-			Ident:  pevt.connFd,
-			Filter: int16(pevt.operation),
-			Flags:  uint16(pevt.flag),
-			Udata:  pevt.userData,
-		})
-	}
-	return kevents
-}
-
-func (kp *kqueuePoller) toPevent(kevents []syscall.Kevent_t, pevent []pevent) {
-	for idx, kevt := range kevents {
-		pevent[idx].connFd = kevt.Ident
-		pevent[idx].operation = int64(kevt.Filter)
-		pevent[idx].flag = int64(kevt.Flags)
-		pevent[idx].userData = kevt.Udata
-	}
-}
-
-func (kq *kqueuePoller) close() error {
-	var err error
-	if kq.kq != nil {
-		err = syscall.Close(*kq.kq)
-	}
-	return err
 }
 
 // todo: extract to config
@@ -251,7 +163,7 @@ const (
 	processTimeout = 1 * time.Second
 )
 
-func NewReactorServer(addr string, handler simpleHandler) (*ReactorServer, error) {
+func NewReactorServer(addr [4]byte, port int, handler simpleHandler) (*ReactorServer, error) {
 	var err error
 	srv := &ReactorServer{
 		bizHandler: handler,
@@ -262,14 +174,14 @@ func NewReactorServer(addr string, handler simpleHandler) (*ReactorServer, error
 
 	// init dispatcher
 	srv.dp = &dispatcher{
-		connections: make(chan *connWrapper),
+		connections: make(chan *Conn),
 		parent:      srv,
 	}
 
 	// init reactors
 	for i := 0; i < numReactor; i++ {
 		tmpIdx := int64(i)
-		kp, err := newKqueuePoller()
+		kp, err := poller.NewKqueuePoller()
 		if err != nil {
 			return nil, err
 		}
@@ -277,7 +189,7 @@ func NewReactorServer(addr string, handler simpleHandler) (*ReactorServer, error
 	}
 
 	// init server transport
-	srv.serverTransport, err = net.Listen("tcp", addr)
+	srv.serverTransport, err = Listen(addr, port)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +197,7 @@ func NewReactorServer(addr string, handler simpleHandler) (*ReactorServer, error
 }
 
 type dispatcher struct {
-	connections chan *connWrapper
+	connections chan *Conn
 	parent      *ReactorServer
 }
 
@@ -314,7 +226,7 @@ func (dp *dispatcher) run() {
 	log.Println("dispatcher stop")
 }
 
-func (dp *dispatcher) input() chan<- *connWrapper {
+func (dp *dispatcher) input() chan<- *Conn {
 	return dp.connections
 }
 
@@ -343,31 +255,28 @@ func (rs *ReactorServer) Serve() error {
 			return e
 		}
 		rs.mutex.Lock()
-		rs.dp.input() <- &connWrapper{
-			tcpConn: conn.(*net.TCPConn),
-			fd:      nil,
-		}
+		rs.dp.input() <- conn
 		rs.mutex.Unlock()
 	}
 }
 
-func (rs *ReactorServer) handler(ctx context.Context, cancel context.CancelFunc, wrapper *connWrapper) {
+func (rs *ReactorServer) handler(ctx context.Context, cancel context.CancelFunc, conn *Conn) {
 	defer func() {
 		rs.done.Done()
 		cancel()
 	}()
-	rs.bizHandler(ctx, wrapper.tcpConn)
+	rs.bizHandler(ctx, conn)
 	rs.mutex.Lock()
 	select {
 	case <-rs.stop:
 		rs.mutex.Unlock()
-		log.Printf("bizHandler ready to close connFd %d", *wrapper.fd)
-		if e := wrapper.tcpConn.Close(); e != nil {
+		log.Printf("bizHandler ready to close connFd %d", conn.fd)
+		if e := conn.Close(); e != nil {
 			log.Printf("bizHandler close connection failed. err: %v", e)
 			return
 		}
 	default:
-		rs.dp.input() <- wrapper // reuse long connection
+		rs.dp.input() <- conn // reuse long connection
 		rs.mutex.Unlock()
 	}
 }
