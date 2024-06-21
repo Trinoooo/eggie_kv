@@ -1,9 +1,14 @@
 package server
 
-import "syscall"
+import (
+	"net"
+	"syscall"
+)
 
 type Conn struct {
-	fd int
+	fd    int
+	laddr *syscall.SockaddrInet4
+	raddr *syscall.SockaddrInet4
 }
 
 func (c *Conn) Read(buf []byte) (int, error) {
@@ -18,12 +23,28 @@ func (c *Conn) Close() error {
 	return syscall.Close(c.fd)
 }
 
+func (c *Conn) RemoteAddr() net.Addr {
+	ipv4 := net.IPv4(c.raddr.Addr[0], c.raddr.Addr[1], c.raddr.Addr[2], c.raddr.Addr[3])
+	return &net.TCPAddr{
+		IP:   ipv4,
+		Port: c.raddr.Port,
+	}
+}
+
+func (c *Conn) LocalAddr() net.Addr {
+	ipv4 := net.IPv4(c.laddr.Addr[0], c.laddr.Addr[1], c.laddr.Addr[2], c.laddr.Addr[3])
+	return &net.TCPAddr{
+		IP:   ipv4,
+		Port: c.laddr.Port,
+	}
+}
+
 type Listener struct {
 	conn *Conn
 }
 
 func (l *Listener) Accept() (*Conn, error) {
-	socket, _, err := syscall.Accept(l.conn.fd)
+	socket, sa, err := syscall.Accept(l.conn.fd)
 	if err != nil {
 		return nil, err
 	}
@@ -33,7 +54,9 @@ func (l *Listener) Accept() (*Conn, error) {
 	}
 
 	return &Conn{
-		fd: socket,
+		fd:    socket,
+		laddr: l.conn.laddr,
+		raddr: sa.(*syscall.SockaddrInet4),
 	}, nil
 }
 
@@ -47,10 +70,11 @@ func Listen(addr [4]byte, port int) (*Listener, error) {
 		return nil, err
 	}
 
-	if err = syscall.Bind(fd, &syscall.SockaddrInet4{
+	laddr := &syscall.SockaddrInet4{
 		Port: port,
 		Addr: addr,
-	}); err != nil {
+	}
+	if err = syscall.Bind(fd, laddr); err != nil {
 		return nil, err
 	}
 
@@ -60,7 +84,8 @@ func Listen(addr [4]byte, port int) (*Listener, error) {
 
 	return &Listener{
 		conn: &Conn{
-			fd: fd,
+			fd:    fd,
+			laddr: laddr,
 		},
 	}, nil
 }

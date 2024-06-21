@@ -17,7 +17,7 @@ const (
 
 	fixSize = 8
 
-	concurrency = 30
+	concurrency = 100
 )
 
 func TestMain(m *testing.M) {
@@ -60,6 +60,7 @@ func shortConnection(t *testing.T, buf []byte) {
 		t.Error(e)
 		return
 	}
+
 	log.Println("[short] client send request successfully", conn.RemoteAddr(), conn.LocalAddr())
 	innerBuf := make([]byte, 8)
 	_, e = conn.Read(innerBuf)
@@ -108,12 +109,14 @@ func longConnection(t *testing.T, buf []byte) {
 func commonHandler(conn *Conn, t *testing.T) {
 	buf := make([]byte, fixSize)
 	_, err := conn.Read(buf)
+	log.Println("server recv", binary.BigEndian.Uint64(buf), conn.LocalAddr(), conn.RemoteAddr(), conn.fd)
 	if err != nil {
 		t.Error(err)
 	}
 	v := binary.BigEndian.Uint64(buf)
 	v = bizLogic(v)
 	binary.BigEndian.PutUint64(buf, v)
+	log.Println("server send", binary.BigEndian.Uint64(buf), conn.LocalAddr(), conn.RemoteAddr(), conn.fd)
 	_, err = conn.Write(buf)
 	if err != nil {
 		t.Error(err)
@@ -148,21 +151,5 @@ func TestReactorServer(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-
-}
-
-func TestProactorServer(t *testing.T) {
-	//todo
-}
-
-func BenchmarkNewNetpollEventLoopServer(b *testing.B) {
-
-}
-
-func BenchmarkNewPureGoroutineServer(b *testing.B) {
-
-}
-
-func BenchmarkNewReactorServer(b *testing.B) {
 
 }
