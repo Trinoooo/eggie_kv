@@ -16,7 +16,7 @@ build-all: build-storage build-cli
 # 测试
 TestPackage := $(test_package)
 test-with-cover:
-	EGGIE_KV_ENV='test' go test -timeout=1h $(TestPackage) -v -coverprofile=./c.out -count=1
+	EGGIE_KV_ENV='test' go test -gcflags="-d=checkptr" -race -timeout=1h $(TestPackage) -v -coverprofile=./c.out -count=1
 
 BenchmarkPackage := $(benchmark_package)
 BenchmarkTarget := $(benchmark_target)
