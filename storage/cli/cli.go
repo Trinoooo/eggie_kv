@@ -8,7 +8,6 @@ import (
 	"github.com/Trinoooo/eggie_kv/storage/server"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/zap"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -118,25 +117,22 @@ func (wrapper *Wrapper) withFlags() {
 
 func (wrapper *Wrapper) withAction() {
 	wrapper.app.Action = func(ctx *cli.Context) error {
-		srv, err := server.NewServer()
+		srv, err := server.NewReactorServer([4]byte{127, 0, 0, 1}, 9999)
 		if err != nil {
 			return err
 		}
 
-		http.HandleFunc("/", srv.Server)
 		go func() {
-			addr := fmt.Sprintf("%s:%d", ctx.String("host"), ctx.Int64("port"))
-			if err := http.ListenAndServe(addr, nil); err != nil {
-				// 父协程没recover也会一起panic，导致程序崩溃
-				logs.Fatal(err.Error())
+			// bugfix: 使用缓冲通道避免执行信号处理程序（下面的for）之前有信号到达会被丢弃
+			sig := make(chan os.Signal, 5)
+			signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+			for range sig {
+				logs.Info("shutdown...")
+				logs.Error(fmt.Sprintf("server shutdown, err: %v", srv.Close()))
 			}
 		}()
-		// bugfix: 使用缓冲通道避免执行信号处理程序（下面的for）之前有信号到达会被丢弃
-		sig := make(chan os.Signal, 5)
-		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-		for range sig {
-			logs.Info("shutdown...")
-		}
+		err = srv.Serve()
+
 		return nil
 	}
 }
