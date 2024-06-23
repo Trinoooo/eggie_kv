@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/binary"
 	"log"
 	"net"
@@ -15,8 +14,6 @@ import (
 const (
 	addr = "127.0.0.1:9999"
 
-	fixSize = 8
-
 	concurrency = 100
 )
 
@@ -26,10 +23,23 @@ func TestMain(m *testing.M) {
 	m.Run()
 }
 
+/*
+type KvRequest struct {
+	OperationType OpType `json:"operation_type"`
+	Key           []byte `json:"key"`
+	Value         []byte `json:"value"`
+}
+*/
+
 func mockClient(t *testing.T, closeServerCallback func() error) {
 	time.Sleep(500 * time.Millisecond) // wait for server start
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, 100)
+	buf := make([]byte, 8+9+8+8+0+8+8)
+	binary.BigEndian.PutUint64(buf, 9)
+	copy(buf[8:], "HandleGet")
+	binary.BigEndian.PutUint64(buf[17:], 0)
+	binary.BigEndian.PutUint64(buf[25:], 0)
+	binary.BigEndian.PutUint64(buf[33:], 8)
+	binary.BigEndian.PutUint64(buf[41:], 100)
 	inflight := sync.WaitGroup{}
 	// 短连接场景下可控制并发度
 	for i := 0; i < concurrency; i++ {
@@ -55,6 +65,7 @@ func shortConnection(t *testing.T, buf []byte) {
 		t.Error(err)
 		return
 	}
+
 	_, e := conn.Write(buf)
 	if e != nil {
 		t.Error(e)
@@ -106,42 +117,13 @@ func longConnection(t *testing.T, buf []byte) {
 	log.Println("[long] client close connection", conn.RemoteAddr(), conn.LocalAddr())
 }
 
-func commonHandler(conn *Conn, t *testing.T) {
-	buf := make([]byte, fixSize)
-	_, err := conn.Read(buf)
-	log.Println("server recv", binary.BigEndian.Uint64(buf), conn.LocalAddr(), conn.RemoteAddr(), conn.fd)
-	if err != nil {
-		t.Error(err)
-	}
-	v := binary.BigEndian.Uint64(buf)
-	v = bizLogic(v)
-	binary.BigEndian.PutUint64(buf, v)
-	log.Println("server send", binary.BigEndian.Uint64(buf), conn.LocalAddr(), conn.RemoteAddr(), conn.fd)
-	_, err = conn.Write(buf)
-	if err != nil {
-		t.Error(err)
-	}
-}
-
-func bizLogic(v uint64) uint64 {
-	// 模拟耗时cpu密集性计算
-	for i := 0; i < 1000000; i++ {
-		v += uint64(i)
-	}
-	// 模拟耗时io密集性操作
-	time.Sleep(1 * time.Second)
-	return v
-}
-
 func TestReactorServer(t *testing.T) {
-	// 启动性能分析服务器
+	// 启动性能采集服务器
 	go func() {
 		log.Println(http.ListenAndServe("localhost:6060", nil))
 	}()
 
-	server, err := NewReactorServer([4]byte{127, 0, 0, 1}, 9999, func(ctx context.Context, conn *Conn) {
-		commonHandler(conn, t)
-	})
+	server, err := NewReactorServer([4]byte{127, 0, 0, 1}, 9999)
 	if err != nil {
 		t.Error(err)
 		return
@@ -151,5 +133,4 @@ func TestReactorServer(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-
 }

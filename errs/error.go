@@ -82,6 +82,8 @@ const (
 	CoreNotFoundErrCode            = 100035
 	ReadSocketErrCode              = 100036
 	WriteSocketErrCode             = 100037
+	UnexpectHandlerErrCode         = 100038
+	TaskNotFinishErrCode           = 100039
 )
 
 func NewUnknownErr() *KvErr {
@@ -238,4 +240,12 @@ func NewReadSocketErr() *KvErr {
 
 func NewWriteSocketErr() *KvErr {
 	return &KvErr{msg: "write socket failed", code: WriteSocketErrCode}
+}
+
+func NewUnexpectHandler() *KvErr {
+	return &KvErr{msg: "unexpect handler key", code: UnexpectHandlerErrCode}
+}
+
+func NewTaskNotFinishErr() *KvErr {
+	return &KvErr{msg: "task not finish yet, try again.", code: TaskNotFinishErrCode}
 }

@@ -25,7 +25,7 @@ func NewMetricsHelper() *MetricsHelper {
 	pusher := push.New("http://localhost:9091", "eggie_kv").Gatherer(registry)
 	go func() {
 		for {
-			if err := pusher.Push(); err != nil {
+			if err := pusher.Add(); err != nil {
 				log.Printf("prometheus pusher push failed. err: %v", err)
 			}
 			// push every 5 ms
