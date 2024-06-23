@@ -12,9 +12,9 @@ jobs:
     steps:
       - name: Set up Prometheus Pushgateway
         run: |
-          curl -LO https://github.com/prometheus/pushgateway/releases/download/v1.5.2/pushgateway-1.5.2.darwin-amd64.tar.gz
-          tar -xvfz pushgateway-1.5.2.darwin-amd64.tar.gz
-          cd pushgateway-1.5.2.darwin-amd64
+          curl -LO https://github.com/prometheus/pushgateway/releases/download/v1.5.2/pushgateway-1.5.2.darwin-amd64.tar.gz &&
+          tar -xvfz pushgateway-1.5.2.darwin-amd64.tar.gz &&
+          cd pushgateway-1.5.2.darwin-amd64 &&
           ./pushgateway &
 
       - name: Set up Go
