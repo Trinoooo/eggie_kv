@@ -14,7 +14,7 @@ import (
 const (
 	addr = "127.0.0.1:9999"
 
-	concurrency = 100
+	concurrency = 250
 )
 
 func TestMain(m *testing.M) {
