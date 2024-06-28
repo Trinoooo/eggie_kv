@@ -131,9 +131,8 @@ func (wrapper *Wrapper) withAction() {
 				logs.Error(fmt.Sprintf("server shutdown, err: %v", srv.Close()))
 			}
 		}()
-		err = srv.Serve()
 
-		return nil
+		return srv.Serve()
 	}
 }
 

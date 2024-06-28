@@ -246,6 +246,6 @@ func NewUnexpectHandler() *KvErr {
 	return &KvErr{msg: "unexpect handler key", code: UnexpectHandlerErrCode}
 }
 
-func NewTaskNotFinishErr() *KvErr {
-	return &KvErr{msg: "task not finish yet, try again.", code: TaskNotFinishErrCode}
+func NewTaskNotFinishErr(taskKey string) *KvErr {
+	return &KvErr{msg: fmt.Sprintf("task %v not finish yet, try again.", taskKey), code: TaskNotFinishErrCode}
 }

@@ -2,9 +2,11 @@ package server
 
 import (
 	"encoding/binary"
+	"github.com/bytedance/mockey"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/push"
 	"log"
 	"net"
-	"net/http"
 	_ "net/http/pprof"
 	"sync"
 	"testing"
@@ -18,7 +20,6 @@ const (
 )
 
 func TestMain(m *testing.M) {
-
 	log.SetFlags(log.Llongfile | log.LstdFlags)
 	m.Run()
 }
@@ -119,9 +120,11 @@ func longConnection(t *testing.T, buf []byte) {
 
 func TestReactorServer(t *testing.T) {
 	// 启动性能采集服务器
-	go func() {
+	/*go func() {
 		log.Println(http.ListenAndServe("localhost:6060", nil))
-	}()
+	}()*/
+	mockey.Mock((*push.Pusher).Add).Return(nil).Build()
+	mockey.Mock(prometheus.Counter.Inc).Return().Build()
 
 	server, err := NewReactorServer([4]byte{127, 0, 0, 1}, 9999)
 	if err != nil {
@@ -131,6 +134,6 @@ func TestReactorServer(t *testing.T) {
 	go mockClient(t, server.Close)
 	err = server.Serve()
 	if err != nil {
-		t.Error(err)
+		t.Error("server shutdown", err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/Trinoooo/eggie_kv/errs"
 	"github.com/Trinoooo/eggie_kv/storage/server/protocol"
+	"github.com/Trinoooo/eggie_kv/utils"
 	"log"
 	"strings"
 	"sync"
@@ -102,7 +103,7 @@ func (p *Processor) decodeHandler() error {
 	return p.checkOrSetState("DecodeRequestHandler", []string{"START"}, func() (bool, error) {
 		handlerKey, err := p.inputProtocol.ReadString()
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
-			return false, errs.NewTaskNotFinishErr()
+			return false, errs.NewTaskNotFinishErr("DecodeRequestHandler")
 		} else if err != nil {
 			return false, err
 		}
@@ -120,7 +121,7 @@ func (p *Processor) decodeRequest() error {
 	if err := p.checkOrSetState("DecodeRequestOpType", []string{"DecodeRequestHandler"}, func() (bool, error) {
 		opTypeI64, err := p.inputProtocol.ReadI64()
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
-			return false, errs.NewTaskNotFinishErr()
+			return false, errs.NewTaskNotFinishErr("DecodeRequestOpType")
 		} else if err != nil {
 			return false, err
 		}
@@ -133,7 +134,7 @@ func (p *Processor) decodeRequest() error {
 	if err := p.checkOrSetState("DecodeRequestKey", []string{"DecodeRequestOpType"}, func() (bool, error) {
 		key, err := p.inputProtocol.ReadBytes()
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
-			return false, errs.NewTaskNotFinishErr()
+			return false, errs.NewTaskNotFinishErr("DecodeRequestKey")
 		} else if err != nil {
 			return false, err
 		}
@@ -146,7 +147,7 @@ func (p *Processor) decodeRequest() error {
 	if err := p.checkOrSetState("DecodeRequestValue", []string{"DecodeRequestKey"}, func() (bool, error) {
 		value, err := p.inputProtocol.ReadBytes()
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
-			return false, errs.NewTaskNotFinishErr()
+			return false, errs.NewTaskNotFinishErr("DecodeRequestValue")
 		} else if err != nil {
 			return false, err
 		}
@@ -172,7 +173,7 @@ func (p *Processor) triggerHandler() error {
 					p.task.Execute()
 				})
 			})
-			return false, errs.NewTaskNotFinishErr()
+			return false, errs.NewTaskNotFinishErr("TriggerHandler")
 		}
 	})
 }
@@ -181,7 +182,7 @@ func (p *Processor) encodeResponse() error {
 	return p.checkOrSetState("EncodeResponseData", []string{"TriggerHandler"}, func() (bool, error) {
 		err := p.outputProtocol.WriteBytes(p.task.resp.Data)
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
-			return false, errs.NewTaskNotFinishErr()
+			return false, errs.NewTaskNotFinishErr("EncodeResponseData")
 		} else if err != nil {
 			return false, err
 		}
@@ -193,7 +194,7 @@ func (p *Processor) encodeException() error {
 	if err := p.checkOrSetState("EncodeExceptionCode", []string{"TriggerHandler"}, func() (bool, error) {
 		err := p.outputProtocol.WriteI64(p.task.exception.Code)
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
-			return false, errs.NewTaskNotFinishErr()
+			return false, errs.NewTaskNotFinishErr("EncodeExceptionCode")
 		} else if err != nil {
 			return false, err
 		}
@@ -205,7 +206,7 @@ func (p *Processor) encodeException() error {
 	if err := p.checkOrSetState("EncodeExceptionMessage", []string{"EncodeExceptionCode"}, func() (bool, error) {
 		err := p.outputProtocol.WriteString(p.task.exception.Message)
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
-			return false, errs.NewTaskNotFinishErr()
+			return false, errs.NewTaskNotFinishErr("EncodeExceptionMessage")
 		} else if err != nil {
 			return false, err
 		}
@@ -241,13 +242,13 @@ func (p *Processor) checkOrSetState(currentStepKey string, previousStepKeys []st
 	if !previousStepFinish {
 		connection := p.inputProtocol.GetConnection()
 		log.Printf("previous step %v not finish, retry. remote addr: %v, local addr: %v, fd: %v", strings.Join(previousStepKeys, ","), connection.RemoteAddr(), connection.LocalAddr(), connection.RawFd())
-		return errs.NewTaskNotFinishErr()
+		return nil
 	}
 
 	// current step has already finished. we should skip to avoid execute `fn` more than once.
 	if currentStepFinish := p.stepState[currentStepKey]; currentStepFinish {
 		connection := p.inputProtocol.GetConnection()
-		log.Printf("current step %v alreay finished, skip. remote addr: %v, local addr: %v, fd: %v", currentStepKey, connection.RemoteAddr(), connection.LocalAddr(), connection.RawFd())
+		log.Printf(utils.WrapInfo("current step %v alreay finished, skip. remote addr: %v, local addr: %v, fd: %v", currentStepKey, connection.RemoteAddr(), connection.LocalAddr(), connection.RawFd()))
 		return nil
 	}
 
@@ -271,7 +272,7 @@ type Task struct {
 func (t *Task) Execute() {
 	resp, err := t.handler(t.req)
 	if err != nil {
-		log.Printf("handler return error: %v", err)
+		log.Printf(utils.WrapError("handler return error: %v", err))
 		var kvErr *errs.KvErr
 		if errors.As(err, &kvErr) {
 			t.exception = &KvException{
