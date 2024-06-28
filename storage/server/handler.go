@@ -11,18 +11,18 @@ func HandleGet(req *KvRequest) (*KvResponse, error) {
 	resp := &KvResponse{
 		Data: make([]byte, 8),
 	}
-	log.Printf(utils.WrapInfo("HandleGet kvRequest: %#v", req))
+	log.Print(utils.WrapInfo("HandleGet kvRequest: %#v", req))
 	v := bizLogic(binary.BigEndian.Uint64(req.Value))
 	binary.BigEndian.PutUint64(resp.Data, v)
-	log.Printf(utils.WrapInfo("HandleGet kvResponse: %#v", resp))
+	log.Print(utils.WrapInfo("HandleGet kvResponse: %#v", resp))
 	return resp, nil
 }
 
 func HandleSet(req *KvRequest) (*KvResponse, error) {
 	resp := &KvResponse{}
-	log.Printf(utils.WrapInfo("HandleGet kvRequest: %#v", req))
+	log.Print(utils.WrapInfo("HandleGet kvRequest: %#v", req))
 	bizLogic(binary.BigEndian.Uint64(req.Value))
-	log.Printf(utils.WrapInfo("HandleGet kvResponse: %#v", resp))
+	log.Print(utils.WrapInfo("HandleGet kvResponse: %#v", resp))
 	return resp, nil
 }
 

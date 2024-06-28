@@ -52,7 +52,7 @@ func newReactor(id int64, srv *ReactorServer, p poller.Poller) *reactor {
 
 func (r *reactor) run() {
 	defer r.srv.done.Done()
-	log.Printf(utils.WrapInfo("reactor #%d start", r.id))
+	log.Print(utils.WrapInfo("reactor #%d start", r.id))
 
 	connects := r.connects
 	r.srv.done.Add(1)
@@ -62,16 +62,16 @@ func (r *reactor) run() {
 		case conn, ok := <-connects:
 			// output been close by dispatcher
 			if !ok {
-				log.Printf(utils.WrapWarn("reactor #%d ready to closes poller", r.id))
+				log.Print(utils.WrapWarn("reactor #%d ready to closes poller", r.id))
 				if e := r.p.Close(); e != nil {
-					log.Printf(utils.WrapError("reactor #%d close p failed. err: %v", r.id, e))
+					log.Print(utils.WrapError("reactor #%d close p failed. err: %v", r.id, e))
 				}
 				connects = nil
-				log.Printf(utils.WrapWarn("reactor #%d output set to nil", r.id))
+				log.Print(utils.WrapWarn("reactor #%d output set to nil", r.id))
 				continue
 			}
 
-			log.Printf(utils.WrapInfo("reactor #%d ready to register event, remote addr: %v, local addr: %v, fd: %v", r.id, conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
+			log.Print(utils.WrapInfo("reactor #%d ready to register event, remote addr: %v, local addr: %v, fd: %v", r.id, conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
 
 			processor := NewProcessor(r.srv, protocol.NewBinaryProtocol(conn), protocol.NewBinaryProtocol(conn))
 			changes := []poller.Pevent{{
@@ -93,16 +93,16 @@ func (r *reactor) run() {
 				continue
 			}
 			r.processors.Store(conn.RawFd(), processor)
-			log.Printf(utils.WrapInfo("reactor #%d register event success, evt remote addr: %v, local addr: %v, fd: %v", r.id, conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
+			log.Print(utils.WrapInfo("reactor #%d register event success, evt remote addr: %v, local addr: %v, fd: %v", r.id, conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
 		case evt, ok := <-r.w.output():
 			if !ok {
-				log.Printf(utils.WrapWarn("reactor #%d stop", r.id))
+				log.Print(utils.WrapWarn("reactor #%d stop", r.id))
 				return
 			}
 			p, _ := r.processors.Load(int(evt.ConnFd))
 			processor := p.(*Processor)
 			conn := processor.GetInputProtocol().GetConnection()
-			log.Printf(utils.WrapInfo("reactor #%d handle event. remote addr: %v, local addr: %v, fd: %v", r.id, conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
+			log.Print(utils.WrapInfo("reactor #%d handle event. remote addr: %v, local addr: %v, fd: %v", r.id, conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
 			// in this case, close is already called.
 			if r.srv.pool == nil {
 				continue
@@ -120,7 +120,7 @@ func (r *reactor) run() {
 				if e != nil {
 					err = errors.Wrap(err, e.Error())
 				}
-				log.Printf(utils.WrapError("error occur when reactor #%v process request, err: %v, remoteAddr: %v, localAddr: %v", r.id, err, conn.RemoteAddr(), conn.LocalAddr()))
+				log.Print(utils.WrapError("error occur when reactor #%v process request, err: %v, remoteAddr: %v, localAddr: %v", r.id, err, conn.RemoteAddr(), conn.LocalAddr()))
 				continue
 			}
 		}
@@ -138,12 +138,12 @@ type waiter struct {
 }
 
 func (w *waiter) run() {
-	log.Printf(utils.WrapInfo("waiter #%d start", w.parent.id))
+	log.Print(utils.WrapInfo("waiter #%d start", w.parent.id))
 	defer w.parent.srv.done.Done()
 	// event buf
 	evts := make([]poller.Pevent, 100)
 	for {
-		log.Printf(utils.WrapInfo("waiter #%d ready to wait event trigger", w.parent.id))
+		log.Print(utils.WrapInfo("waiter #%d ready to wait event trigger", w.parent.id))
 
 		// wait for event to be trigger
 		n, err := w.p.Wait(evts)
@@ -151,16 +151,16 @@ func (w *waiter) run() {
 			// pass
 			continue
 		} else if errors.Is(err, syscall.EBADF) {
-			log.Printf(utils.WrapWarn("waiter #%d stop gracefully", w.parent.id))
+			log.Print(utils.WrapWarn("waiter #%d stop gracefully", w.parent.id))
 			close(w.events)
 			return
 		} else if err != nil {
-			log.Printf(utils.WrapError("error occur inside waiter #%d, err: %v", w.parent.id, err))
+			log.Print(utils.WrapError("error occur inside waiter #%d, err: %v", w.parent.id, err))
 			close(w.events)
 			return
 		}
 
-		log.Printf(utils.WrapInfo("waiter #%d event trigger success, evts: %#v, n: %d", w.parent.id, evts, n))
+		log.Print(utils.WrapInfo("waiter #%d event trigger success, evts: %#v, n: %d", w.parent.id, evts, n))
 
 		for i := 0; i < n; i++ {
 			evt := evts[i]
@@ -169,14 +169,14 @@ func (w *waiter) run() {
 			conn := processor.GetInputProtocol().GetConnection()
 			switch {
 			case evt.Flag&syscall.EV_EOF != 0:
-				log.Printf(utils.WrapInfo("waiter #%d meet eof, remote addr: %v, local addr: %v, fd: %v", w.parent.id, conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
-				log.Printf(utils.WrapInfo("waiter #%d close server connection, err: %v", w.parent.id, conn.Close()))
+				log.Print(utils.WrapInfo("waiter #%d meet eof, remote addr: %v, local addr: %v, fd: %v", w.parent.id, conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
+				log.Print(utils.WrapInfo("waiter #%d close server connection, err: %v", w.parent.id, conn.Close()))
 			default:
 				triggerRead := evt.Operation == syscall.EVFILT_READ
 				triggerWrite := evt.Operation == syscall.EVFILT_WRITE
-				log.Printf(utils.WrapInfo("waiter #%d ready to send evt(trigger read: %v, trigger write: %v, operation: %v) to reactor, evt remote addr: %v, local addr: %v, fd: %v", w.parent.id, triggerRead, triggerWrite, evt.Operation, conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
+				log.Print(utils.WrapInfo("waiter #%d ready to send evt(trigger read: %v, trigger write: %v, operation: %v) to reactor, evt remote addr: %v, local addr: %v, fd: %v", w.parent.id, triggerRead, triggerWrite, evt.Operation, conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
 				w.events <- evt
-				log.Printf(utils.WrapInfo("waiter #%d sent evt to reactor success, evt remote addr: %v, local addr: %v, fd: %v", w.parent.id, conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
+				log.Print(utils.WrapInfo("waiter #%d sent evt to reactor success, evt remote addr: %v, local addr: %v, fd: %v", w.parent.id, conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
 			}
 		}
 	}
@@ -240,14 +240,14 @@ func (dp *dispatcher) run() {
 	log.Println(utils.WrapInfo("dispatcher start"))
 
 	for conn := range dp.connections {
-		log.Printf(utils.WrapInfo("dispatcher receive connection, remote addr: %v, local addr: %v, fd: %v", conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
+		log.Print(utils.WrapInfo("dispatcher receive connection, remote addr: %v, local addr: %v, fd: %v", conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
 		// random load balance
 		id := rand.Int63n(numReactor)
 		if reactor, exist := dp.parent.reactors[id]; exist {
 			reactor.input() <- conn
-			log.Printf(utils.WrapInfo("dispatcher send connection to reactor #%v success, remote addr: %v, local addr: %v, fd: %v", id, conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
+			log.Print(utils.WrapInfo("dispatcher send connection to reactor #%v success, remote addr: %v, local addr: %v, fd: %v", id, conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
 		} else {
-			log.Printf(utils.WrapError("dispatcher find reactor #%v not exist", id))
+			log.Print(utils.WrapError("dispatcher find reactor #%v not exist", id))
 		}
 	}
 
@@ -282,36 +282,37 @@ func (rs *ReactorServer) Serve() error {
 
 	// acceptor
 	for {
-		log.Printf(utils.WrapInfo("acceptor ready to accept connections"))
+		log.Print(utils.WrapInfo("acceptor ready to accept connections"))
 		conn, err := rs.serverTransport.Accept()
 		if err != nil {
 			if errors.Is(err, syscall.EINTR) {
 				// pass
 				continue
 			} else if errors.Is(err, syscall.ECONNABORTED) {
-				log.Printf(utils.WrapWarn("software caused connection abort, maybe a darwin/ios bug, ignore"))
+				log.Print(utils.WrapWarn("software caused connection abort, maybe a darwin/ios bug, ignore"))
 				continue
 			} else if errors.Is(err, syscall.EBADF) {
-				log.Printf(utils.WrapWarn("Close called. exit gracefully"))
+				log.Print(utils.WrapWarn("Close called. exit gracefully"))
 				rs.mutex.Lock()
 				rs.dp.close()
 				if e := rs.close(); e != nil {
 					err = errors.Wrap(err, e.Error())
 				}
+				log.Print(utils.WrapError("error occur when close reactor server, err: %v", err))
 				rs.done.Wait()
 				rs.clearState()
 				rs.mutex.Unlock()
 				return nil
 			} else {
-				log.Printf(utils.WrapError("error occur when accept connection, err: %v", err))
+				log.Print(utils.WrapError("error occur when accept connection, err: %v", err))
 				return err
 			}
 		}
-		log.Printf(utils.WrapInfo("acceptor accept connection, remote addr: %v, local addr: %v, fd: %v", conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
+		log.Print(utils.WrapInfo("acceptor accept connection, remote addr: %v, local addr: %v, fd: %v", conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
 		rs.metricsHelper.ConnectionAcceptCounter.Inc()
-		log.Printf(utils.WrapInfo("acceptor ready to send connection, remote addr: %v, local addr: %v, fd: %v", conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
+		log.Print(utils.WrapInfo("acceptor ready to send connection, remote addr: %v, local addr: %v, fd: %v", conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
 		rs.dp.input() <- conn
-		log.Printf(utils.WrapInfo("acceptor success send connection, remote addr: %v, local addr: %v, fd: %v", conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
+		log.Print(utils.WrapInfo("acceptor success send connection, remote addr: %v, local addr: %v, fd: %v", conn.RemoteAddr(), conn.LocalAddr(), conn.RawFd()))
 	}
 }
 

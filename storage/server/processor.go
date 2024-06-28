@@ -248,7 +248,7 @@ func (p *Processor) checkOrSetState(currentStepKey string, previousStepKeys []st
 	// current step has already finished. we should skip to avoid execute `fn` more than once.
 	if currentStepFinish := p.stepState[currentStepKey]; currentStepFinish {
 		connection := p.inputProtocol.GetConnection()
-		log.Printf(utils.WrapInfo("current step %v alreay finished, skip. remote addr: %v, local addr: %v, fd: %v", currentStepKey, connection.RemoteAddr(), connection.LocalAddr(), connection.RawFd()))
+		log.Print(utils.WrapInfo("current step %v alreay finished, skip. remote addr: %v, local addr: %v, fd: %v", currentStepKey, connection.RemoteAddr(), connection.LocalAddr(), connection.RawFd()))
 		return nil
 	}
 
@@ -272,7 +272,7 @@ type Task struct {
 func (t *Task) Execute() {
 	resp, err := t.handler(t.req)
 	if err != nil {
-		log.Printf(utils.WrapError("handler return error: %v", err))
+		log.Print(utils.WrapError("handler return error: %v", err))
 		var kvErr *errs.KvErr
 		if errors.As(err, &kvErr) {
 			t.exception = &KvException{
