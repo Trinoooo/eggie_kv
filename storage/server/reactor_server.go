@@ -89,7 +89,7 @@ func (r *reactor) run() {
 				if e != nil {
 					err = errors.Wrap(err, e.Error())
 				}
-				log.Println(err, changes, conn, conn.RemoteAddr(), conn.LocalAddr())
+				log.Println(utils.WrapError("%s %v %v %v %v", err, changes, conn, conn.RemoteAddr(), conn.LocalAddr()))
 				continue
 			}
 			r.processors.Store(conn.RawFd(), processor)
