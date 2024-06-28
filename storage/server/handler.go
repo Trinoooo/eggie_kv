@@ -1,21 +1,37 @@
 package server
 
 import (
-	"github.com/Trinoooo/eggie_kv/consts"
+	"encoding/binary"
+	"github.com/Trinoooo/eggie_kv/utils"
+	"log"
+	"time"
 )
 
-func (srv *Server) HandleGet(req *consts.KvRequest) (*consts.KvResponse, error) {
-	value, err := srv.core.Get(string(req.Key))
-	if err != nil {
-		return nil, err
+func HandleGet(req *KvRequest) (*KvResponse, error) {
+	resp := &KvResponse{
+		Data: make([]byte, 8),
 	}
-	return newSuccessResp(value), nil
+	log.Print(utils.WrapInfo("HandleGet kvRequest: %#v", req))
+	v := bizLogic(binary.BigEndian.Uint64(req.Value))
+	binary.BigEndian.PutUint64(resp.Data, v)
+	log.Print(utils.WrapInfo("HandleGet kvResponse: %#v", resp))
+	return resp, nil
 }
 
-func (srv *Server) HandleSet(req *consts.KvRequest) (*consts.KvResponse, error) {
-	err := srv.core.Set(string(req.Key), req.Value)
-	if err != nil {
-		return nil, err
+func HandleSet(req *KvRequest) (*KvResponse, error) {
+	resp := &KvResponse{}
+	log.Print(utils.WrapInfo("HandleGet kvRequest: %#v", req))
+	bizLogic(binary.BigEndian.Uint64(req.Value))
+	log.Print(utils.WrapInfo("HandleGet kvResponse: %#v", resp))
+	return resp, nil
+}
+
+func bizLogic(v uint64) uint64 {
+	// 模拟耗时cpu密集性计算
+	for i := 0; i < 1000000; i++ {
+		v += uint64(i)
 	}
-	return newSuccessResp(nil), nil
+	// 模拟耗时io密集性操作
+	time.Sleep(1 * time.Second)
+	return v
 }
